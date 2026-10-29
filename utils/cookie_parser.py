@@ -24,6 +24,10 @@ def normalize_playwright_cookie(item: Dict[str, Any]) -> Dict[str, Any]:
     if not name:
         return {}
 
+    # Strip stale msToken from exported cookies so TikTok webmssdk.js mints a fresh, IP-matched token
+    if name == "msToken":
+        return {}
+
     cookie: Dict[str, Any] = {
         "name": name,
         "value": value,
@@ -38,10 +42,13 @@ def normalize_playwright_cookie(item: Dict[str, Any]) -> Dict[str, Any]:
         if raw_domain.startswith("#HttpOnly_"):
             raw_domain = raw_domain[len("#HttpOnly_"):]
         if "tiktok.com" in raw_domain:
-            if raw_domain.startswith("."):
-                cookie["domain"] = raw_domain
+            clean_domain = raw_domain.lstrip(".")
+            # Normalize www.tiktok.com, .www.tiktok.com, tiktok.com, and .tiktok.com to .tiktok.com
+            # This ensures auth cookies (sessionid, sid_tt, uid_tt, tt-target-idc) reach telemetry & security subdomains
+            if clean_domain in ("tiktok.com", "www.tiktok.com"):
+                cookie["domain"] = ".tiktok.com"
             else:
-                cookie["domain"] = f".{raw_domain}"
+                cookie["domain"] = f".{clean_domain}"
         else:
             cookie["domain"] = ".tiktok.com"
         cookie["path"] = str(item.get("path", "/")) or "/"

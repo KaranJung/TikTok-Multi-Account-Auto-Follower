@@ -5,16 +5,19 @@ Anti-Ghost & Native Stealth Follow System:
    Relies on Chromium's native --disable-blink-features=AutomationControlled and --mute-audio flags.
    Zero init_script monkey-patches so navigator.plugins, navigator.webdriver, and AudioContext remain 100% native.
 2. Aligned User-Agent & Client Hints:
-   Keeps Playwright Chromium's native desktop User-Agent (user_agent: None) so HTTP User-Agent,
-   Sec-CH-UA headers, navigator.platform, and TLS fingerprint match without conflicts.
+   Reads browser.version directly from the launched Playwright Chromium binary to build matching
+   Desktop Chrome/<browser.version> User-Agent and Sec-CH-UA headers.
+   Passes --headless=new in headless mode to prevent HeadlessChrome leak.
 3. Automatic msToken Session Warmup:
-   If a cookie file doesn't have an active msToken, warms up on https://www.tiktok.com/ first
-   so webmssdk.js initializes valid security tokens before visiting the target profile.
-4. Real Server Verification After Clicking Follow:
-   Waits specifically for the /api/commit/follow/user/ network response, waits 5 seconds,
-   and reloads the profile page (page.reload()) to verify both the server hydration state
+   Strips any stale exported msToken on load and always warms up on https://www.tiktok.com/
+   so webmssdk.js mints a fresh, IP-matched msToken before visiting the target profile.
+4. Safe Follow Click & Anti-Unfollow Retry Guard:
+   Waits specifically for /api/commit/follow/user/ response.
+   Only attempts a retry click if the button strictly remains in 'follow' state (never clicks if 'following' or 'requested').
+5. Real Server Verification:
+   Waits 5 seconds, then reloads profile page (page.reload()) to verify both the server hydration state
    (userInfo.user.relation in 1, 2) and the reloaded button state.
-5. Cloudflare detection & proxy error isolation.
+6. Cloudflare detection & proxy error isolation.
 No emojis used.
 """
 import json
@@ -136,10 +139,10 @@ class TikTokFollowBot:
 
     def _warmup_session(self, page: Page):
         """
-        Visits https://www.tiktok.com/ so webmssdk.js initializes valid security tokens
-        (msToken & ttwid) before visiting the target profile.
+        Visits https://www.tiktok.com/ so webmssdk.js mints a fresh, IP-matched
+        msToken and ttwid before visiting the target profile.
         """
-        log_info("Warming up session on https://www.tiktok.com/ (generating valid msToken)...")
+        log_info("Warming up session on https://www.tiktok.com/ (minting fresh msToken for current IP)...")
         try:
             page.goto("https://www.tiktok.com/", wait_until="domcontentloaded", timeout=35000)
             self._random_sleep(3.0, 5.0)
@@ -241,6 +244,9 @@ class TikTokFollowBot:
             "detail": ""
         }
 
+        # Strip any stale msToken from exported cookies so fresh token is generated for current IP
+        cookies = [c for c in cookies if c.get("name") != "msToken"]
+
         cookie_names = {c.get("name", "") for c in cookies}
         if not any(k in cookie_names for k in ("sessionid", "sessionid_ss", "sid_tt")):
             log_warning(f"Cookie file {account_name} is missing sessionid/sid_tt! Follow requests may fail.")
@@ -248,20 +254,24 @@ class TikTokFollowBot:
         with sync_playwright() as p:
             # Native Chromium launch:
             # Relies on native --disable-blink-features=AutomationControlled and --mute-audio flags.
-            # No detectable init_script monkey-patches so plugins, webdriver, and AudioContext remain 100% native.
+            # Passes --headless=new when in headless mode to use modern headless Chrome.
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-infobars",
+                "--disable-dev-shm-usage",
+                "--mute-audio",
+                "--ignore-certificate-errors",
+                "--ignore-ssl-errors",
+                "--allow-running-insecure-content",
+            ]
+            if self.headless:
+                launch_args.append("--headless=new")
+
             launch_kwargs = {
                 "headless": self.headless,
                 "ignore_default_args": ["--enable-automation"],
-                "args": [
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-infobars",
-                    "--disable-dev-shm-usage",
-                    "--mute-audio",
-                    "--ignore-certificate-errors",
-                    "--ignore-ssl-errors",
-                    "--allow-running-insecure-content",
-                ]
+                "args": launch_args,
             }
             if proxy:
                 launch_kwargs["proxy"] = proxy
@@ -269,28 +279,33 @@ class TikTokFollowBot:
 
             browser: Browser = p.chromium.launch(**launch_kwargs)
             profile = get_random_chrome_profile()
-            log_info(f"Launching profile: [bold cyan]{profile['name']}[/bold cyan]")
 
-            # Context configuration:
-            # When user_agent is None, Playwright uses Chromium's native Desktop User-Agent,
-            # ensuring Sec-CH-UA, navigator.platform, and TLS/JA3 fingerprints match 100%.
+            # Align User-Agent with the exact Chromium binary version to eliminate HeadlessChrome leak
+            browser_ver = browser.version
+            desktop_ua = (
+                f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                f"(KHTML, like Gecko) Chrome/{browser_ver} Safari/537.36"
+            )
+            major_ver = browser_ver.split(".")[0]
+            sec_ch_ua = f'"Chromium";v="{major_ver}", "Google Chrome";v="{major_ver}", "Not=A?Brand";v="99"'
+
+            log_info(f"Launching Chrome {major_ver} profile: [bold cyan]{profile['name']}[/bold cyan]")
+
             context_kwargs = {
                 "viewport": profile["viewport"],
+                "user_agent": desktop_ua,
                 "is_mobile": False,
                 "has_touch": False,
                 "device_scale_factor": 1,
                 "locale": "en-US",
                 "timezone_id": "America/New_York",
                 "ignore_https_errors": True,
+                "extra_http_headers": {
+                    "sec-ch-ua": sec_ch_ua,
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                },
             }
-            if profile.get("user_agent"):
-                context_kwargs["user_agent"] = profile["user_agent"]
-                if profile.get("sec_ch_ua"):
-                    context_kwargs["extra_http_headers"] = {
-                        "sec-ch-ua": profile["sec_ch_ua"],
-                        "sec-ch-ua-mobile": "?0",
-                        "sec-ch-ua-platform": '"Windows"',
-                    }
 
             context: BrowserContext = browser.new_context(**context_kwargs)
             page: Page = context.new_page()
@@ -306,14 +321,8 @@ class TikTokFollowBot:
                         except Exception:
                             pass
 
-                # Step 1: Automatic msToken Session Warmup
-                # If cookie file does not have an active msToken, warm up on https://www.tiktok.com/
-                has_mstoken = any(c.get("name") == "msToken" and c.get("value") for c in cookies)
-                if not has_mstoken:
-                    log_info("No active msToken found in cookies. Warming up session on https://www.tiktok.com/...")
-                    self._warmup_session(page)
-                else:
-                    log_info("Active msToken present in cookies; skipping warmup.")
+                # Step 1: Always warm up session on TikTok home feed so webmssdk.js mints a fresh msToken for this IP
+                self._warmup_session(page)
 
                 # Step 2: Navigate to target creator profile
                 log_info(f"Navigating to target profile: {target_profile_url}")
@@ -445,7 +454,7 @@ class TikTokFollowBot:
                 follow_btn.click(delay=random.randint(70, 150))
 
                 # Wait specifically for the backend API response (/commit/follow/user/)
-                deadline = time.monotonic() + 12
+                deadline = time.monotonic() + 10
                 while time.monotonic() < deadline and not api_result["received"]:
                     self._random_sleep(0.5, 0.8)
                     if page.locator("div#tiktok-verify-ele, div[class*='captcha']").first.is_visible():
@@ -453,6 +462,22 @@ class TikTokFollowBot:
                         result["action"] = "Captcha Triggered"
                         result["detail"] = "Captcha challenge triggered"
                         return result
+
+                # Anti-Unfollow Retry Guard:
+                # Crucial safeguard: ONLY retry click if the button strictly remains in 'follow' state.
+                # If it already flipped to 'following', 'friends', or 'requested', NEVER click again!
+                if not api_result["received"]:
+                    refreshed_btn = self._find_follow_button(page)
+                    current_btn_state = self._follow_state(refreshed_btn) if refreshed_btn.count() > 0 else "unknown"
+                    if current_btn_state == "follow":
+                        log_info("API response not detected and button still says 'Follow'. Retrying click once...")
+                        self._random_sleep(0.8, 1.4)
+                        refreshed_btn.click(delay=random.randint(80, 150))
+                        retry_deadline = time.monotonic() + 6
+                        while time.monotonic() < retry_deadline and not api_result["received"]:
+                            self._random_sleep(0.4, 0.7)
+                    else:
+                        log_info(f"Button state is '{current_btn_state}'; aborting retry click to avoid accidental unfollow.")
 
                 if not api_result["received"]:
                     log_warning("Did not observe /commit/follow/user/ network call (blocked by frontend or login wall).")

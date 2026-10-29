@@ -60,9 +60,9 @@ get_random_mobile_profile = get_random_chrome_profile
 get_random_apple_profile = get_random_chrome_profile
 
 
-def get_random_user_agent() -> Optional[str]:
-    """Returns None to use native Chromium user agent, or standard Chrome UA string."""
-    return None
+def get_random_user_agent() -> str:
+    """Returns a standard desktop Chrome UA string."""
+    return random.choice(ALL_PHONE_USER_AGENTS)
 
 
 if __name__ == "__main__":
