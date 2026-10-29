@@ -212,9 +212,32 @@ class TikTokFollowBot:
         return None
 
     def _find_follow_button(self, page: Page):
+        # Target profile header containers have priority over sidebar suggested accounts
+        header_selectors = [
+            '[data-e2e="user-page-header"] [data-e2e="follow-button"]:visible',
+            '[data-e2e="user-header"] [data-e2e="follow-button"]:visible',
+            'div[class*="ShareTitle"] [data-e2e="follow-button"]:visible',
+            'div[class*="DivUserContainer"] [data-e2e="follow-button"]:visible',
+            'div[class*="DivShareTitle"] [data-e2e="follow-button"]:visible',
+        ]
+        for sel in header_selectors:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                return loc.first
+
+        # Fallback to the first visible follow button in the DOM (the profile header is at the top)
         buttons = page.locator('[data-e2e="follow-button"]:visible')
-        if buttons.count() > 1:
-            raise ValueError("Multiple visible follow buttons; cannot safely identify the target action")
+        if buttons.count() > 0:
+            return buttons.first
+
+        # Fallback for dynamic class buttons inside the user header
+        header_btn = page.locator('[data-e2e="user-page-header"] button:visible, [data-e2e="user-header"] button:visible')
+        for i in range(header_btn.count()):
+            btn = header_btn.nth(i)
+            txt = (btn.inner_text() or "").strip().lower()
+            if any(k in txt for k in ("follow", "following", "requested", "friends")):
+                return btn
+
         return buttons.first
 
     @staticmethod
