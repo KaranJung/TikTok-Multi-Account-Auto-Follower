@@ -73,8 +73,7 @@ class TikTokFollowBot:
         if page.is_closed():
             return "Browser Closed"
         if response is not None and response.status == 429:
-            self.stop_event.set()
-            log_warning("HTTP 429: rate limited. Stopping queued accounts; no automatic retry.")
+            log_warning("HTTP 429: rate limited on this account/proxy.")
             return "Rate Limited"
         challenge = self._detect_challenge(page)
         if not challenge and response is not None:
@@ -82,14 +81,12 @@ class TikTokFollowBot:
                 challenge = "Cloudflare Blocked"
         if not challenge:
             if response is not None and response.status == 403:
-                self.stop_event.set()
                 return "Access Blocked"
             if response is not None and response.status >= 400:
                 return "Network Error"
             return None
         if self.headless or self.challenge_timeout == 0:
-            self.stop_event.set()
-            log_warning(f"{challenge}: manual attention required. Use visible mode; cookies preserved.")
+            log_warning(f"{challenge}: security challenge detected; skipping account.")
             return challenge
 
         log_warning(
@@ -118,8 +115,7 @@ class TikTokFollowBot:
                 log_info("Challenge no longer visible; rechecking the session before any action.")
                 return None
             page.wait_for_timeout(500)
-        self.stop_event.set()
-        log_warning("Challenge remains unresolved. Stopping queued accounts and preserving cookies.")
+        log_warning("Challenge remains unresolved; skipping account.")
         return challenge
 
     def _dismiss_popups(self, page: Page):
@@ -330,8 +326,7 @@ class TikTokFollowBot:
                 try:
                     body_text = page.locator("body").inner_text(timeout=1000).strip().lower()
                     if body_text == "forbidden" or "access denied" in body_text:
-                        log_error(f"Access denied for {account_name}; stopping queued accounts.")
-                        self.stop_event.set()
+                        log_error(f"Access denied for {account_name}; skipping account.")
                         result["action"] = "Access Blocked"
                         result["detail"] = "Access denied; cookies preserved"
                         return result
@@ -494,7 +489,6 @@ class TikTokFollowBot:
 
                 http_status = api_result["http_status"]
                 if http_status is not None and http_status >= 400:
-                    self.stop_event.set()
                     action = "Rate Limited" if http_status == 429 else "Action Blocked"
                     result.update(action=action, detail=f"Follow request HTTP {http_status}; no retry")
                     return result
@@ -507,7 +501,6 @@ class TikTokFollowBot:
                     if sc is not None and sc != 0:
                         err_msg = msg or f"code {sc}"
                         log_error(f"TikTok backend rejected follow: {err_msg}")
-                        self.stop_event.set()
                         result["action"] = "Action Blocked"
                         result["detail"] = f"Backend rejected: {err_msg}"
                         return result

@@ -275,7 +275,7 @@ def main():
         account_name = file_path.name
         if bot.stop_event.is_set():
             res = {"account": account_name, "status": "Unknown", "action": "Skipped",
-                   "detail": "Not started: batch stopped after a security block"}
+                   "detail": "Not started: batch stopped by user"}
             with results_lock:
                 results.append(res)
             return res
@@ -314,8 +314,7 @@ def main():
 
         if res["action"] in ("Cloudflare Blocked", "Captcha Triggered", "Rate Limited",
                              "Access Blocked", "Action Blocked", "Browser Closed", "Browser Error"):
-            bot.stop_event.set()
-            log_warning("Stopping queued accounts after a security block or browser interruption. No automatic retry.")
+            log_warning(f"Account {account_name} encountered {res['action']}. Continuing to next account...")
 
         # Delete expired cookie files ONLY if session is verified Dead by TikTok
         # NEVER delete on temporary proxy drops, TLS errors, or rate blocks
@@ -347,18 +346,24 @@ def main():
         return res
 
     # Single or Multi-Worker execution
-    if concurrency == 1:
-        for idx, f in enumerate(files, 1):
-            worker_task((idx, f))
-    else:
-        log_info(f"Launching pool with {concurrency} parallel browser workers...")
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            list(executor.map(worker_task, enumerate(files, 1)))
+    try:
+        if concurrency == 1:
+            for idx, f in enumerate(files, 1):
+                if bot.stop_event.is_set():
+                    break
+                worker_task((idx, f))
+        else:
+            log_info(f"Launching pool with {concurrency} parallel browser workers...")
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                list(executor.map(worker_task, enumerate(files, 1)))
+    except KeyboardInterrupt:
+        bot.stop_event.set()
+        log_warning("\nExecution interrupted by user (Ctrl+C). Generating summary table...")
 
     # 8. Print Summary Table
     print_summary_table(results)
     if bot.stop_event.is_set():
-        log_warning("Batch stopped. Resolve the reported issue before starting another run.")
+        log_warning("Batch was stopped early by user. See above for completed accounts.")
     else:
         log_info("Account processing finished. See the summary for verified outcomes.")
 

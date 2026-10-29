@@ -1,4 +1,4 @@
-# TikTok Multi-Account Auto-Follower 🚀
+# TikTok Multi-Account Auto-Follower
 
 An automated Python tool designed to manage and follow TikTok creators across multiple accounts simultaneously using saved session cookies—avoiding manual credentials login, captchas, and account locks.
 
@@ -7,7 +7,7 @@ An automated Python tool designed to manage and follow TikTok creators across mu
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
 - **Multi-Account Cycling:** Processes entire folders of `.txt` or `.json` cookie files with parallel browser concurrency (`1-10+`).
 - **TLS/JA3 Fingerprint Spoofing (curl_cffi):** Uses `curl_cffi` impersonating genuine Google Chrome 131 TLS/JA3/HTTP2 stacks for instant 0.3s pre-flight checks, bypassing Cloudflare bot detection.
@@ -29,7 +29,7 @@ An automated Python tool designed to manage and follow TikTok creators across mu
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 tiktok-automation/
@@ -52,7 +52,7 @@ tiktok-automation/
 
 ---
 
-## 🛠️ Step 1: Installation & Setup
+## Step 1: Installation & Setup
 
 ### 1. Open Terminal
 Open PowerShell or Command Prompt in the project folder:
@@ -74,7 +74,7 @@ playwright install chromium
 
 ---
 
-## 🍪 Step 2: Preparing Your Cookie Files
+## Step 2: Preparing Your Cookie Files
 
 Place your `.txt` cookie files inside the `cookies/` folder (or select any custom folder on your computer when prompted).
 
@@ -87,7 +87,7 @@ Supported formats include:
 
 ---
 
-## 🚀 Step 3: Running the Automation
+## Step 3: Running the Automation
 
 ### Method A: One-Click Launcher (Easiest)
 
@@ -176,7 +176,7 @@ python main.py -t "@kamal_sharmz" -c "C:\Users\Hydra\Desktop\tiktok" --delay 20
 
 ---
 
-## 🌐 Proxy Support & Formats
+## Proxy Support & Formats
 
 If you supply a proxy file or string, the bot will automatically round-robin rotate through them across all accounts and workers.
 
@@ -192,7 +192,7 @@ Supported formats:
 
 ---
 
-## ⚙️ Available Command-Line Options
+## Available Command-Line Options
 
 | Option | Flag | Description | Default |
 | :--- | :--- | :--- | :--- |
@@ -207,7 +207,7 @@ Supported formats:
 
 ---
 
-## 🛡️ Anti-Ban & Anti-CAPTCHA Best Practices
+## Anti-Ban & Anti-CAPTCHA Best Practices
 
 1. **Always Use Visible Mode for High-Volume Runs:** Visible window mode utilizes your GPU's full rendering pipeline and avoids headless fingerprint detection.
 2. **Realistic Cooldowns:** Keep at least `5–15` seconds cooldown between accounts (`--delay 10`) to prevent TikTok from flagging your IP.
@@ -216,13 +216,13 @@ Supported formats:
 
 ---
 
-## 👨‍💻 Developer & Support
+## Developer & Support
 
 - **Created by:** @hydra_X001
 - **Official Telegram:** [https://t.me/hydrax001](https://t.me/hydrax001)
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the [MIT License](LICENSE) - free to use, edit, modify, and distribute by hydra (@hydra_X001).
