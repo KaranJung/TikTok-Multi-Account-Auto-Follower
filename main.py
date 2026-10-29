@@ -29,7 +29,7 @@ from utils.logger import (
 
 def get_cookie_files(path_str: str) -> list[Path]:
     """
-    Return the TikTok .txt cookie files directly inside a folder or a single file.
+    Return the TikTok .txt and .json cookie files directly inside a folder or a single file.
     Filters out helper files like README, how_to, or examples.
     """
     p = Path(path_str).expanduser()
@@ -41,8 +41,9 @@ def get_cookie_files(path_str: str) -> list[Path]:
     return [
         file_path for file_path in sorted(p.iterdir())
         if file_path.is_file()
-        and file_path.suffix.lower() == ".txt"
+        and file_path.suffix.lower() in (".txt", ".json")
         and not file_path.name.lower().endswith(".txt.example")
+        and not file_path.name.lower().endswith(".json.example")
         and not file_path.name.lower().startswith("readme")
         and not file_path.name.lower().startswith("how_to")
     ]
@@ -51,7 +52,7 @@ def get_cookie_files(path_str: str) -> list[Path]:
 def main():
     parser = argparse.ArgumentParser(description="TikTok Multi-Account Follow Automation via Cookies")
     parser.add_argument("-t", "--target", type=str, help="Target TikTok profile URL or @username")
-    parser.add_argument("-c", "--cookies", type=str, help="Path to the folder containing .txt cookie files")
+    parser.add_argument("-c", "--cookies", type=str, help="Path to the folder containing .txt or .json cookie files")
     parser.add_argument("-w", "--concurrency", type=int, default=None, help="Number of concurrent browsers to run (default: 1)")
     parser.add_argument("-p", "--proxy", type=str, default=None, help="Path to proxy file (proxies.txt) or single proxy string (optional)")
     parser.add_argument("--headless", dest="headless", action="store_true", default=None, help="Run browser in headless mode (no window)")
@@ -86,7 +87,7 @@ def main():
             log_error(f"Error accessing cookie path '{cookie_path}': {exc}")
             sys.exit(1)
         if not files:
-            log_error(f"No valid .txt cookie files found in '{cookie_path}'!")
+            log_error(f"No valid .txt or .json cookie files found in '{cookie_path}'!")
             sys.exit(1)
     else:
         while True:
@@ -125,8 +126,8 @@ def main():
                 else:
                     abs_path = Path(chosen_path).resolve()
                     console.print(
-                        f"\n[bold yellow][!] No .txt cookie files found in '{chosen_path}'![/bold yellow]\n"
-                        f"[bold #25F4EE][*] Please place your exported TikTok .txt cookie files in:[/bold #25F4EE]\n"
+                        f"\n[bold yellow][!] No .txt or .json cookie files found in '{chosen_path}'![/bold yellow]\n"
+                        f"[bold #25F4EE][*] Please place your exported TikTok .txt or .json cookie files in:[/bold #25F4EE]\n"
                         f"   [bold white]{abs_path}[/bold white]\n"
                         f"[dim]   (Format: Netscape .txt, JSON array, or sessionid=... key-value tokens)[/dim]\n"
                         f"[dim]   Press Enter after adding files to re-scan, type a custom folder, or 'q' to quit.[/dim]\n"
@@ -290,7 +291,8 @@ def main():
             proxy=proxy
         )
 
-        # Delete expired cookie files
+        # Delete expired cookie files ONLY if session is verified Dead by TikTok
+        # NEVER delete on temporary proxy drops, TLS errors, or rate blocks
         if res["status"] == "Dead":
             try:
                 file_path.unlink(missing_ok=True)
@@ -299,6 +301,8 @@ def main():
             except OSError as exc:
                 log_error(f"Could not delete {file_path.name}: {exc}")
                 res["detail"] = f"Session expired; file deletion failed: {exc}"
+        elif res["status"] in ("Proxy Failed", "Proxy Blocked"):
+            log_warning(f"Preserving cookie file for {account_name} due to proxy error (session is not dead).")
 
         with results_lock:
             results.append(res)

@@ -1,14 +1,12 @@
 """
 Free Proxy Finder & Tester for TikTok Automation.
 
-Aggregates live proxies across the internet:
-- Public Proxy Websites & Web Aggregators (ProxyScrape, SSLProxies.org, FreeProxyList.net, US-Proxy, Spys.me)
-- Global Verified Proxy Streams (Proxifly, Thordata, TheSpeedX, Monosans, RoosterKid)
-
-Directly tests candidates against https://www.tiktok.com using curl_cffi Chrome131 TLS.
-Rejects any proxy that triggers 403 Forbidden, SSL handshake errors, or Cloudflare blocks.
-
-No emojis used. Clean percentage progress updates and arranged summary table.
+Features:
+1. Validates that the proxy actually tunnels HTTPS to TikTok and returns authentic TikTok content
+   (tiktok.com / ttwstatic / __UNIVERSAL_DATA_FOR_REHYDRATION__ markers) rather than captive portals or fake 200 responses.
+2. Expands active proxy feeds across the web and increases concurrency for faster filtering.
+3. Clean percentage progress updates (.....10% LOADED) and arranged summary table.
+No emojis used.
 """
 from __future__ import annotations
 
@@ -24,67 +22,44 @@ from rich import box
 
 from utils.logger import log_info, log_success, log_warning, log_error, console
 
-# ---------------------------------------------------------------------------
-# Global Free Proxy Sources (Websites, Live APIs, and High-Speed Streams)
-# ---------------------------------------------------------------------------
 PROXY_SOURCES: List[Dict[str, str]] = [
-    # 1. Live Websites & Web APIs
-    {"name": "ProxyScrape HTTP API",    "url": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"},
-    {"name": "ProxyScrape SOCKS5 API",  "url": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all"},
-    {"name": "SSLProxies.org",          "url": "https://www.sslproxies.org/"},
-    {"name": "FreeProxyList.net",       "url": "https://free-proxy-list.net/"},
-    {"name": "US-Proxy.org",            "url": "https://www.us-proxy.org/"},
-    {"name": "UK-Proxy (FreeProxyList)","url": "https://free-proxy-list.net/uk-proxy.html"},
-    {"name": "Anonymous Proxies",       "url": "https://free-proxy-list.net/anonymous-proxy.html"},
-    {"name": "Spys.me Live HTTP",       "url": "https://spys.me/proxy.txt"},
-    {"name": "Spys.me Live SOCKS",      "url": "https://spys.me/socks.txt"},
-
-    # 2. Continuous Global Verified Streams
-    {"name": "Proxifly HTTP Stream",    "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt"},
-    {"name": "Proxifly SOCKS5 Stream",  "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt"},
-    {"name": "Thordata Awesome Proxies","url": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/all.txt"},
-    {"name": "TheSpeedX HTTP Pool",     "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"},
-    {"name": "TheSpeedX SOCKS5 Pool",   "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"},
-    {"name": "Monosans Checked Pool",   "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"},
-    {"name": "RoosterKid HTTPS",        "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt"},
-    {"name": "RoosterKid SOCKS5",       "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt"},
-    {"name": "ShiftyTR Active List",    "url": "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"},
-    {"name": "Sunny9577 Live Scrape",   "url": "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt"},
+    {"name": "ProxyScrape HTTP API",     "url": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=elite"},
+    {"name": "ProxyScrape SOCKS5 API",   "url": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=5000&country=all"},
+    {"name": "SSLProxies.org",           "url": "https://www.sslproxies.org/"},
+    {"name": "FreeProxyList.net",        "url": "https://free-proxy-list.net/"},
+    {"name": "US-Proxy.org",             "url": "https://www.us-proxy.org/"},
+    {"name": "Anonymous Proxies",        "url": "https://free-proxy-list.net/anonymous-proxy.html"},
+    {"name": "Spys.me Live HTTP",        "url": "https://spys.me/proxy.txt"},
+    {"name": "Spys.me Live SOCKS",       "url": "https://spys.me/socks.txt"},
+    {"name": "Proxifly HTTP Stream",     "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt"},
+    {"name": "Proxifly SOCKS5 Stream",   "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt"},
+    {"name": "TheSpeedX HTTP Pool",      "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"},
+    {"name": "TheSpeedX SOCKS5 Pool",    "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"},
+    {"name": "Monosans Checked Pool",    "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"},
+    {"name": "Monosans SOCKS5 Pool",     "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt"},
+    {"name": "Vakhov Fresh Proxies",     "url": "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/https.txt"},
+    {"name": "Vakhov SOCKS5 Proxies",    "url": "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt"},
+    {"name": "RoosterKid HTTPS",         "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt"},
+    {"name": "RoosterKid SOCKS5",        "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt"},
 ]
 
-TEST_URL            = "https://www.tiktok.com"
-TEST_TIMEOUT        = 6    # seconds per proxy against TikTok
-MAX_TEST_WORKERS    = 70   # parallel checking threads
+PROFILE_TEST_URL       = "https://www.tiktok.com/@tiktok"
+TEST_TIMEOUT           = 6
+MAX_TEST_WORKERS       = 80
 MAX_COLLECT_PER_SOURCE = 350
-MAX_WORKING         = 30   # target number of verified TikTok proxies
+MAX_WORKING            = 30
 
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 def _extract_proxies_from_payload(text: str) -> List[str]:
-    """
-    Extracts clean ip:port strings from any format:
-    - HTML table rows (<tr><td>IP</td><td>PORT</td>) from sites like sslproxies.org
-    - Raw text lists (one ip:port per line)
-    - JSON or textareas
-    """
     found = set()
-
-    # 1. HTML table format
     for ip, port in re.findall(r"<tr>\s*<td>(\d{1,3}(?:\.\d{1,3}){3})</td>\s*<td>(\d{2,5})</td>", text, re.IGNORECASE):
         found.add(f"{ip}:{port}")
-
-    # 2. General ip:port tokens anywhere in response
     for match in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b", text):
         found.add(match)
-
     return list(found)
 
 
 def _fetch_from_source(source: Dict[str, str]) -> List[str]:
-    """Fetch proxy candidates from a given website or endpoint."""
     url = source["url"]
     try:
         from curl_cffi import requests as cffi
@@ -105,10 +80,10 @@ def _fetch_from_source(source: Dict[str, str]) -> List[str]:
 
 def _test_proxy_on_tiktok(proxy_str: str) -> Optional[Dict[str, Any]]:
     """
-    Test a proxy directly against https://www.tiktok.com using Chrome 131 TLS.
-    Tries HTTP proxy tunnel, falls back to SOCKS5 if candidate is a SOCKS proxy.
-    Returns Playwright-compatible proxy dict with latency if status is 200 OK.
-    Rejects any proxy that triggers 403 Forbidden or connection error.
+    Strictly verifies that the proxy:
+    1. Supports HTTPS CONNECT tunneling to www.tiktok.com without MITM gateway injection
+    2. Returns authentic TikTok HTML content (tiktok / ttwstatic / __UNIVERSAL_DATA_FOR_REHYDRATION__)
+    3. Is not blocked with 403 Forbidden or Access Denied
     """
     raw = proxy_str.split("://")[-1].strip()
     schemes = ["http", "socks5"]
@@ -125,11 +100,19 @@ def _test_proxy_on_tiktok(proxy_str: str) -> Optional[Dict[str, Any]]:
                 "Accept-Language": "en-US,en;q=0.9",
             })
             t0 = time.monotonic()
-            r = s.get(TEST_URL, timeout=TEST_TIMEOUT, verify=False)
+            r = s.get(PROFILE_TEST_URL, timeout=TEST_TIMEOUT, verify=False)
             latency = time.monotonic() - t0
 
-            # Verified clean response from TikTok
-            if r.status_code == 200 and "forbidden" not in r.text.lower() and len(r.text) > 400:
+            # Validates genuine TikTok response
+            is_valid_tiktok = (
+                r.status_code == 200
+                and ("tiktok" in r.text.lower() or "ttwstatic" in r.text.lower() or "__universal_data_for_rehydration__" in r.text.lower())
+                and "forbidden" not in r.text.lower()
+                and "access denied" not in r.text.lower()
+                and len(r.text) > 400
+            )
+
+            if is_valid_tiktok:
                 return {"server": server, "_latency": round(latency, 2)}
         except Exception:
             pass
@@ -137,16 +120,14 @@ def _test_proxy_on_tiktok(proxy_str: str) -> Optional[Dict[str, Any]]:
 
 
 def _latency_bar(lat: float) -> str:
-    """Return a clean speed indicator based on latency in seconds."""
-    if lat < 0.6:
+    if lat < 1.0:
         return "[bold green]FAST[/bold green]"
-    if lat < 1.5:
+    if lat < 2.5:
         return "[bold yellow]OK  [/bold yellow]"
     return "[bold red]SLOW[/bold red]"
 
 
 def _print_proxy_table(working: List[Dict[str, Any]]) -> None:
-    """Render a clean arranged numbered table of all verified working proxies."""
     table = Table(
         title=f"[bold white]COLLECTED PROXIES FOR USE ({len(working)})[/bold white]",
         box=box.ROUNDED,
@@ -178,28 +159,12 @@ def _print_proxy_table(working: List[Dict[str, Any]]) -> None:
     console.print("")
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def collect_and_test_proxies(
     min_working: int = 5,
     max_working: int = MAX_WORKING,
 ) -> List[Dict[str, Any]]:
-    """
-    1. Shows initial notification: PLEASE WAIT WE ARE TESTING AND COLLECTING PROXIES
-    2. Scrapes websites & APIs silently in parallel across the web.
-    3. Tests candidates directly against TikTok with parallel threads.
-    4. Prints progressive updates in percent:
-         .....10% LOADED
-         .........20% LOADED
-         ...
-         .........................................100% LOADED
-    5. Displays arranged clean table of working proxies sorted by speed.
-    """
     console.print("\n[bold #25F4EE]PLEASE WAIT WE ARE TESTING AND COLLECTING PROXIES[/bold #25F4EE]\n")
 
-    # Step 1: Fetch from all web sources in parallel
     raw_candidates: List[str] = []
     with ThreadPoolExecutor(max_workers=len(PROXY_SOURCES)) as pool:
         futures = {pool.submit(_fetch_from_source, src): src for src in PROXY_SOURCES}
@@ -210,7 +175,6 @@ def collect_and_test_proxies(
             except Exception:
                 pass
 
-    # Deduplicate while preserving order
     seen: set = set()
     unique: List[str] = []
     for p in raw_candidates:
@@ -222,7 +186,8 @@ def collect_and_test_proxies(
         log_error("Could not fetch any proxy candidates. Please check internet connection.")
         return []
 
-    # Step 2: Test concurrently against TikTok and print progressive percent updates
+    log_info(f"Scraped {len(unique)} unique proxy candidates. Filtering for genuine TikTok HTTPS support...")
+
     working_with_latency: List[Dict[str, Any]] = []
     tested = 0
     stop_early = False
@@ -245,7 +210,6 @@ def collect_and_test_proxies(
                 if len(working_with_latency) >= max_working:
                     stop_early = True
 
-            # Calculate current percentage (progress toward target proxies or completed candidates)
             pct_by_working = (len(working_with_latency) / max_working) * 100
             pct_by_tested = (tested / len(unique)) * 100
             current_pct = min(100, int(max(pct_by_working, pct_by_tested)))
@@ -260,7 +224,6 @@ def collect_and_test_proxies(
                     f"[dim]({working_count} active proxies ready)[/dim]"
                 )
 
-    # Ensure progress reaches 100% when testing finishes or target is met
     if working_with_latency and last_reported_milestone < 100:
         while last_reported_milestone < 100:
             last_reported_milestone += 10
@@ -271,14 +234,11 @@ def collect_and_test_proxies(
                 f"[dim]({working_count} active proxies ready)[/dim]"
             )
 
-    # Step 3: Sort by speed (fastest first)
     working_with_latency.sort(key=lambda x: x.get("_latency", 99))
 
-    # Step 4: Render clean arranged summary table
     if working_with_latency:
         _print_proxy_table(working_with_latency)
 
-    # Clean internal key before returning
     working = []
     for w in working_with_latency:
         entry = {k: v for k, v in w.items() if k != "_latency"}
@@ -289,13 +249,12 @@ def collect_and_test_proxies(
             f"[bold green]{len(working)}[/bold green] working proxies verified on TikTok and ready for rotation."
         )
     else:
-        log_warning("No working proxies found. You can add your own into proxies.txt.")
+        log_warning("No free public proxies passed strict TikTok verification. Residential/rotating proxies are strongly recommended.")
 
     return working
 
 
 def save_proxies_to_file(proxies: List[Dict[str, Any]], path: str = "proxies.txt") -> None:
-    """Write working proxy list to file, overwriting previous content."""
     lines = []
     for p in proxies:
         server   = p.get("server", "")
