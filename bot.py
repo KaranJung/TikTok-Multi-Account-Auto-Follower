@@ -1,11 +1,20 @@
 """
 TikTok Automation Core Bot.
-Anti-Ghost & Stealth Follow System:
-1. Warms up session on https://www.tiktok.com/foryou so webmssdk initializes valid msToken & ttwid cookies.
-2. Uses strictly aligned Desktop Windows Chrome User-Agent, navigator.platform, and Sec-CH-UA headers.
-3. Waits specifically for the '/api/commit/follow/user/' network response instead of trusting optimistic button text.
-4. Reloads the target profile page after clicking Follow to verify backend persistence (detects shadow-drops).
-5. Robust Cloudflare detection and proxy SSL error bypass.
+Anti-Ghost & Native Stealth Follow System:
+1. Native Chromium Environment:
+   Relies on Chromium's native --disable-blink-features=AutomationControlled and --mute-audio flags.
+   Zero init_script monkey-patches so navigator.plugins, navigator.webdriver, and AudioContext remain 100% native.
+2. Aligned User-Agent & Client Hints:
+   Keeps Playwright Chromium's native desktop User-Agent (user_agent: None) so HTTP User-Agent,
+   Sec-CH-UA headers, navigator.platform, and TLS fingerprint match without conflicts.
+3. Automatic msToken Session Warmup:
+   If a cookie file doesn't have an active msToken, warms up on https://www.tiktok.com/ first
+   so webmssdk.js initializes valid security tokens before visiting the target profile.
+4. Real Server Verification After Clicking Follow:
+   Waits specifically for the /api/commit/follow/user/ network response, waits 5 seconds,
+   and reloads the profile page (page.reload()) to verify both the server hydration state
+   (userInfo.user.relation in 1, 2) and the reloaded button state.
+5. Cloudflare detection & proxy error isolation.
 No emojis used.
 """
 import json
@@ -14,13 +23,6 @@ import time
 import random
 from typing import Dict, Any, List, Optional
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
-
-try:
-    from playwright_stealth import Stealth
-    _HAS_STEALTH_CLASS = True
-except ImportError:
-    from playwright_stealth import stealth_sync
-    _HAS_STEALTH_CLASS = False
 
 from utils.logger import log_info, log_success, log_warning, log_error, log_step
 from user_agent import get_random_chrome_profile
@@ -41,13 +43,6 @@ def normalize_tiktok_url(target: str) -> str:
 class TikTokFollowBot:
     def __init__(self, headless: bool = False):
         self.headless = headless
-        self.stealth = Stealth() if _HAS_STEALTH_CLASS else None
-
-    def _apply_stealth(self, page: Page):
-        if _HAS_STEALTH_CLASS and self.stealth is not None:
-            self.stealth.apply_stealth_sync(page)
-        else:
-            stealth_sync(page)
 
     def _random_sleep(self, min_sec: float = 1.5, max_sec: float = 3.5):
         time.sleep(random.uniform(min_sec, max_sec))
@@ -141,18 +136,16 @@ class TikTokFollowBot:
 
     def _warmup_session(self, page: Page):
         """
-        Visits the TikTok home feed first so TikTok's webmssdk generates a valid msToken
-        and behavioral telemetry before navigating to the target creator's profile.
+        Visits https://www.tiktok.com/ so webmssdk.js initializes valid security tokens
+        (msToken & ttwid) before visiting the target profile.
         """
-        log_info("Warming up session on TikTok home feed (generating valid msToken)...")
+        log_info("Warming up session on https://www.tiktok.com/ (generating valid msToken)...")
         try:
-            page.goto("https://www.tiktok.com/foryou", wait_until="domcontentloaded", timeout=35000)
-            self._random_sleep(2.5, 4.0)
+            page.goto("https://www.tiktok.com/", wait_until="domcontentloaded", timeout=35000)
+            self._random_sleep(3.0, 5.0)
             self._dismiss_popups(page)
             page.mouse.move(random.randint(200, 700), random.randint(200, 600), steps=10)
             self._random_sleep(1.5, 2.5)
-            page.keyboard.press("ArrowDown")
-            self._random_sleep(2.0, 3.5)
         except Exception as exc:
             log_warning(f"Warmup notice (continuing to profile): {exc}")
 
@@ -253,6 +246,9 @@ class TikTokFollowBot:
             log_warning(f"Cookie file {account_name} is missing sessionid/sid_tt! Follow requests may fail.")
 
         with sync_playwright() as p:
+            # Native Chromium launch:
+            # Relies on native --disable-blink-features=AutomationControlled and --mute-audio flags.
+            # No detectable init_script monkey-patches so plugins, webdriver, and AudioContext remain 100% native.
             launch_kwargs = {
                 "headless": self.headless,
                 "ignore_default_args": ["--enable-automation"],
@@ -273,41 +269,31 @@ class TikTokFollowBot:
 
             browser: Browser = p.chromium.launch(**launch_kwargs)
             profile = get_random_chrome_profile()
-            log_info(f"Launching Desktop Chrome profile: [bold cyan]{profile['name']}[/bold cyan]")
+            log_info(f"Launching profile: [bold cyan]{profile['name']}[/bold cyan]")
 
-            context: BrowserContext = browser.new_context(
-                viewport=profile["viewport"],
-                user_agent=profile["user_agent"],
-                is_mobile=False,
-                has_touch=False,
-                device_scale_factor=1,
-                locale="en-US",
-                timezone_id="America/New_York",
-                ignore_https_errors=True,
-                extra_http_headers={
-                    "sec-ch-ua": profile.get("sec_ch_ua", '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'),
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"Windows"',
-                },
-            )
+            # Context configuration:
+            # When user_agent is None, Playwright uses Chromium's native Desktop User-Agent,
+            # ensuring Sec-CH-UA, navigator.platform, and TLS/JA3 fingerprints match 100%.
+            context_kwargs = {
+                "viewport": profile["viewport"],
+                "is_mobile": False,
+                "has_touch": False,
+                "device_scale_factor": 1,
+                "locale": "en-US",
+                "timezone_id": "America/New_York",
+                "ignore_https_errors": True,
+            }
+            if profile.get("user_agent"):
+                context_kwargs["user_agent"] = profile["user_agent"]
+                if profile.get("sec_ch_ua"):
+                    context_kwargs["extra_http_headers"] = {
+                        "sec-ch-ua": profile["sec_ch_ua"],
+                        "sec-ch-ua-mobile": "?0",
+                        "sec-ch-ua-platform": '"Windows"',
+                    }
 
-            try:
-                context.add_init_script("""
-                    try {
-                        delete Object.getPrototypeOf(navigator).webdriver;
-                        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-                        window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} };
-                        Object.defineProperty(HTMLMediaElement.prototype, 'muted', {
-                            get: () => true, set: () => {}, configurable: true
-                        });
-                    } catch(e) {}
-                """)
-            except Exception:
-                pass
-
+            context: BrowserContext = browser.new_context(**context_kwargs)
             page: Page = context.new_page()
-            self._apply_stealth(page)
 
             try:
                 log_info(f"Injecting {len(cookies)} cookies into browser context...")
@@ -320,8 +306,14 @@ class TikTokFollowBot:
                         except Exception:
                             pass
 
-                # Step 1: Warmup session to initialize msToken & webmssdk signature tokens
-                self._warmup_session(page)
+                # Step 1: Automatic msToken Session Warmup
+                # If cookie file does not have an active msToken, warm up on https://www.tiktok.com/
+                has_mstoken = any(c.get("name") == "msToken" and c.get("value") for c in cookies)
+                if not has_mstoken:
+                    log_info("No active msToken found in cookies. Warming up session on https://www.tiktok.com/...")
+                    self._warmup_session(page)
+                else:
+                    log_info("Active msToken present in cookies; skipping warmup.")
 
                 # Step 2: Navigate to target creator profile
                 log_info(f"Navigating to target profile: {target_profile_url}")
@@ -365,6 +357,19 @@ class TikTokFollowBot:
                     log_success(f"Session is ACTIVE for {account_name}!")
                     result["status"] = "Active"
 
+                # Check initial server relation before clicking
+                initial_relation = page.evaluate("""() => {
+                    try {
+                        const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+                        if (!el) return null;
+                        const data = JSON.parse(el.textContent);
+                        const scope = data?.['__DEFAULT_SCOPE__'] || {};
+                        const userDetail = scope?.['webapp.user-detail']?.userInfo;
+                        const rel = userDetail?.user?.relation;
+                        return typeof rel === 'number' ? rel : null;
+                    } catch(e) { return null; }
+                }""")
+
                 # Step 4: Find follow button
                 follow_btn = self._find_follow_button(page)
                 if follow_btn.count() == 0 or not follow_btn.is_visible():
@@ -381,16 +386,16 @@ class TikTokFollowBot:
                     return result
 
                 state = self._follow_state(follow_btn)
-                log_info(f"Initial follow state: {state}")
+                log_info(f"Initial follow state: button='{state}', server relation={initial_relation}")
 
-                if state == "following":
-                    log_success(f"ALREADY FOLLOWING: {account_name} is already following!")
+                if (initial_relation is not None and initial_relation in (1, 2)) or state == "following":
+                    log_success(f"ALREADY FOLLOWING: {account_name} is already following target!")
                     result["status"] = "Active"
                     result["action"] = "Already Following"
                     result["detail"] = "Already following target"
                     return result
 
-                if state == "requested":
+                if state == "requested" or initial_relation == 3:
                     result["status"] = "Active"
                     result["action"] = "Requested"
                     result["detail"] = "Follow request pending"
@@ -413,12 +418,12 @@ class TikTokFollowBot:
 
                 page.on("response", on_response)
 
-                # Humanized mouse movement & profile scroll before clicking Follow
+                # Humanized profile scroll & mouse movement before clicking Follow
                 log_info("Simulating human profile activity before clicking Follow...")
                 try:
                     page.mouse.move(random.randint(300, 800), random.randint(250, 550), steps=12)
                     page.mouse.wheel(0, random.randint(250, 450))
-                    self._random_sleep(1.2, 2.2)
+                    self._random_sleep(1.2, 2.0)
                     page.mouse.wheel(0, -random.randint(250, 450))
                     self._random_sleep(1.0, 1.8)
                 except Exception:
@@ -458,35 +463,56 @@ class TikTokFollowBot:
                         result["action"] = "Action Blocked"
                         result["detail"] = f"Backend rejected: {msg}"
                         return result
-                    log_info(f"Follow API returned status_code=0, follow_status={api_result['follow_status']}. Reloading page to verify persistence...")
+                    log_info(f"Follow API returned status_code=0, follow_status={api_result['follow_status']}.")
 
-                # Step 6: TRUE persistence check — reload the page so TikTok serves fresh server state
-                self._random_sleep(3.0, 4.5)
+                # Step 6: Wait 5 seconds, then reload profile page for real server verification
+                log_info("Waiting 5s for TikTok backend synchronization before verification...")
+                time.sleep(5)
+
+                log_info("Reloading profile page to verify server hydration and button persistence...")
                 page.reload(wait_until="domcontentloaded", timeout=35000)
-                self._random_sleep(2.5, 3.5)
+                self._random_sleep(2.0, 3.5)
                 self._dismiss_popups(page)
 
+                # Check server hydration state (userInfo.user.relation in 1, 2)
+                server_relation = page.evaluate("""() => {
+                    try {
+                        const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+                        if (!el) return null;
+                        const data = JSON.parse(el.textContent);
+                        const scope = data?.['__DEFAULT_SCOPE__'] || {};
+                        const userDetail = scope?.['webapp.user-detail']?.userInfo;
+                        const rel = userDetail?.user?.relation;
+                        return typeof rel === 'number' ? rel : null;
+                    } catch (e) {
+                        return null;
+                    }
+                }""")
+
+                # Check reloaded button state
                 follow_btn_after = self._find_follow_button(page)
                 if follow_btn_after.count() > 0:
                     persisted_state = self._follow_state(follow_btn_after)
                 else:
                     persisted_state = "unknown"
 
-                if persisted_state == "following":
-                    log_success(f"FOLLOWED & VERIFIED: {account_name} follow persisted after page reload!")
+                log_info(f"Post-reload verification: server relation={server_relation}, button state='{persisted_state}'")
+
+                if (server_relation is not None and server_relation in (1, 2)) or persisted_state in ("following", "friends"):
+                    log_success(f"FOLLOWED & VERIFIED: {account_name} follow confirmed on server! (relation={server_relation}, button={persisted_state})")
                     result["action"] = "Followed"
-                    result["detail"] = "Follow persisted after reload"
-                elif persisted_state == "requested":
-                    log_warning("Follow request persisted (private account).")
+                    result["detail"] = f"Verified (relation={server_relation}, button={persisted_state})"
+                elif persisted_state == "requested" or server_relation == 3:
+                    log_warning(f"Follow request persisted (private account): {account_name}")
                     result["action"] = "Requested"
                     result["detail"] = "Follow request pending"
                 else:
                     log_warning(
-                        f"GHOST FOLLOW DETECTED: Button reverted to '{persisted_state}' after reload! "
+                        f"GHOST FOLLOW DETECTED: Button reverted to '{persisted_state}' (relation={server_relation}) after reload! "
                         "TikTok silently dropped the follow (IP/proxy trust score or account rate limit)."
                     )
                     result["action"] = "Shadow-Dropped"
-                    result["detail"] = "Ghost follow (reverted after reload)"
+                    result["detail"] = f"Ghost follow (relation={server_relation}, button={persisted_state})"
 
                 return result
 
