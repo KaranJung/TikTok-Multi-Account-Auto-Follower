@@ -2,70 +2,37 @@
 TIKTOK META - COOKIE ANALYZER & ACCOUNT AUDITOR COMMANDS
 ================================================================================
 
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok"
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --sort
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --export my_accounts_report 
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3 --sort --export full_audit_report
+QUICK COPY-PASTE COMMANDS (Run from project folder: c:\Users\Hydra\Desktop\tiktok-automation):
 
-
-
-
-Description:
-  Scans all TikTok .txt or .json cookie files, extracts geographic registration 
-  data (store-country-code), target datacenter IDC (tt-target-idc), user ID (uid_tt), 
-  active/expired session status, live follower count, following count, videos, 
-  and checks if accounts are deactivated or banned.
-
---------------------------------------------------------------------------------
-1. FAST METADATA & GEO-LOCATION SCAN (0.1 Seconds - No Browser Needed)
---------------------------------------------------------------------------------
-Scans your entire cookie vault instantly, groups accounts by country and IDC, 
-and generates summary tables plus JSON and CSV audit reports:
-
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok"
-
-Or running from inside the tiktokmeta folder:
+1. Fast Geo-Location & Metadata Scan (0.1 Seconds):
 python tiktokmeta\tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok"
 
-Interactive prompt mode (just press Enter to use default vault):
-python tiktokmeta.py
+2. Deep Live Audit (Followers, Following, Likes, Videos, Deactivated Check):
+python tiktokmeta\tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3
 
+3. Automatically Sort Cookies into Country Folders:
+python tiktokmeta\tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --sort
+
+4. Custom Export Report Filename:
+python tiktokmeta\tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --export my_accounts_report
+
+5. All Options Combined (Deep Audit + Country Sorting + Export):
+python tiktokmeta\tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3 --sort --export full_audit_report
 
 --------------------------------------------------------------------------------
-2. DEEP LIVE ACCOUNT AUDIT (Followers, Following, Likes, Deactivated Check)
+IF RUNNING DIRECTLY FROM INSIDE THE TIKTOKMETA FOLDER:
 --------------------------------------------------------------------------------
-Launches lightweight background Chromium workers to inspect each account profile 
-on TikTok's live servers. Identifies deactivated / banned accounts, extracts 
-real-time follower count, following count, like count, and video count:
-
+cd c:\Users\Hydra\Desktop\tiktok-automation\tiktokmeta
+python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok"
 python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3
-
-Options:
-  --deep         : Enables live profile inspection on TikTok servers.
-  -w 3           : Runs 3 parallel browser workers (can be 1 to 10).
-
-
---------------------------------------------------------------------------------
-3. AUTO-ORGANIZE COOKIE FILES BY COUNTRY FOLDERS
---------------------------------------------------------------------------------
-Reads each cookie's store-country-code and automatically copies them into 
-organized country subfolders (e.g. by_country/br/, by_country/es/, by_country/us/) 
-so you can assign matching country proxies to each batch:
-
 python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --sort
 
-
 --------------------------------------------------------------------------------
-4. CUSTOM EXPORT FILENAME
+COMMAND OPTIONS BREAKDOWN:
 --------------------------------------------------------------------------------
-Exports the audit results to custom JSON and CSV filenames:
-
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --export my_accounts_report
-
-
---------------------------------------------------------------------------------
-5. ALL OPTIONS COMBINED (Full Audit + Country Sorting + Custom Export)
---------------------------------------------------------------------------------
-python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3 --sort --export full_audit_report
-
+-c <path>         : Path to folder containing .txt or .json cookie files
+--deep            : Launches browser workers to audit live followers/following and deactivated status
+-w <num>          : Number of parallel browser instances for deep audit (default: 2, recommended: 2-5)
+--sort            : Automatically organizes cookie files into country folders (e.g. by_country/br/, by_country/es/)
+--export <name>   : Custom output base name for JSON and CSV reports (default: cookie_audit_report)
+================================================================================
