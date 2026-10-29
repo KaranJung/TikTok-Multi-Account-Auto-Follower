@@ -410,20 +410,40 @@ class TikTokFollowBot:
                     result["detail"] = "Follow request pending"
                     return result
 
-                # Step 5: Listen for TikTok's real /commit/follow/user/ API response
-                api_result = {"received": False, "status_code": None, "follow_status": None, "msg": "", "http_status": None}
+                # Step 5: Listen for TikTok's real follow API response
+                api_result = {
+                    "received": False,
+                    "status_code": None,
+                    "follow_status": None,
+                    "msg": "",
+                    "http_status": None,
+                }
 
                 def on_response(resp):
-                    if "commit/follow/user" in resp.url:
-                        api_result["received"] = True
-                        api_result["http_status"] = resp.status
-                        try:
-                            payload = resp.json()
-                            api_result["status_code"] = payload.get("status_code")
-                            api_result["follow_status"] = payload.get("follow_status")
-                            api_result["msg"] = payload.get("status_msg", "")
-                        except Exception:
-                            pass
+                    try:
+                        # Only examine POST requests to follow-related endpoints (ignore OPTIONS preflight)
+                        if resp.request.method != "POST":
+                            return
+                        url = resp.url
+                        if any(k in url for k in ("commit/follow/user", "user/follow", "relation/follow")):
+                            api_result["received"] = True
+                            api_result["http_status"] = resp.status
+                            try:
+                                payload = resp.json()
+                                if isinstance(payload, dict):
+                                    sc = payload.get("status_code", payload.get("statusCode"))
+                                    fs = payload.get("follow_status", payload.get("followStatus"))
+                                    sm = payload.get("status_msg", payload.get("statusMsg", payload.get("message", "")))
+                                    if sc is not None:
+                                        api_result["status_code"] = int(sc)
+                                    if fs is not None:
+                                        api_result["follow_status"] = int(fs)
+                                    if sm:
+                                        api_result["msg"] = str(sm)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
 
                 page.on("response", on_response)
 
@@ -479,16 +499,23 @@ class TikTokFollowBot:
                     else:
                         log_info(f"Button state is '{current_btn_state}'; aborting retry click to avoid accidental unfollow.")
 
-                if not api_result["received"]:
-                    log_warning("Did not observe /commit/follow/user/ network call (blocked by frontend or login wall).")
-                else:
-                    if api_result["status_code"] != 0 or api_result["follow_status"] in (0, None):
-                        msg = api_result["msg"] or f"status_code={api_result['status_code']}"
-                        log_error(f"TikTok backend rejected follow: {msg}")
+                # Evaluate backend API response:
+                # ONLY reject immediately if the backend returned an explicit non-zero error code (e.g. 2049 = rate limited)
+                if api_result["received"]:
+                    sc = api_result["status_code"]
+                    msg = api_result["msg"]
+                    if sc is not None and sc != 0:
+                        err_msg = msg or f"code {sc}"
+                        log_error(f"TikTok backend rejected follow: {err_msg}")
                         result["action"] = "Action Blocked"
-                        result["detail"] = f"Backend rejected: {msg}"
+                        result["detail"] = f"Backend rejected: {err_msg}"
                         return result
-                    log_info(f"Follow API returned status_code=0, follow_status={api_result['follow_status']}.")
+                    elif sc == 0:
+                        log_info("TikTok backend confirmed follow request (status_code=0).")
+                    else:
+                        log_info("Backend follow call detected. Verifying persistence via profile reload...")
+                else:
+                    log_info("Follow button clicked. Verifying persistence via profile reload...")
 
                 # Step 6: Wait 5 seconds, then reload profile page for real server verification
                 log_info("Waiting 5s for TikTok backend synchronization before verification...")
