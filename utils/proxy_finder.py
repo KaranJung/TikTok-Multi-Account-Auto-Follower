@@ -26,7 +26,8 @@ from rich import box
 
 from utils.logger import log_info, log_success, log_warning, log_error, console
 
-PROXY_SOURCES: List[Dict[str, str]] = [
+PROXY_SOURCES: List[Dict[str, Any]] = [
+    {"name": "FlashProxy API (1000)",     "limit": 1000, "url": "https://www.flashproxy.com/api/proxies/txt?limit=1000"},
     {"name": "ProxyScrape HTTPS CONNECT API", "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&ssl=yes&timeout=3000&limit=350&proxy_format=protocolipport&format=text"},
     {"name": "ProxyScrape SOCKS5 API", "scheme": "socks5", "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=socks5&timeout=3000&limit=350&proxy_format=protocolipport&format=text"},
     {"name": "GeoNode HTTPS CONNECT API", "format": "geonode", "url": "https://proxylist.geonode.com/api/proxy-list?limit=350&page=1&sort_by=latency&sort_type=asc&protocols=https"},
@@ -114,7 +115,7 @@ def _extract_proxies_from_payload(
     return list(found)
 
 
-def _fetch_from_source(source: Dict[str, str]) -> List[str]:
+def _fetch_from_source(source: Dict[str, Any]) -> List[str]:
     url = source["url"]
     try:
         from curl_cffi import requests as cffi
@@ -126,7 +127,8 @@ def _fetch_from_source(source: Dict[str, str]) -> List[str]:
             items = _extract_proxies_from_payload(
                 response.text, source.get("scheme", "http"), source.get("format", "text")
             )
-            return items[:MAX_COLLECT_PER_SOURCE]
+            limit = int(source.get("limit", MAX_COLLECT_PER_SOURCE))
+            return items[:limit]
     except Exception:
         return []
 
