@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Sensitive account data & cookies
+cookies/*.txt
+!cookies/README.txt
+
+# OS metadata
+Thumbs.db
+.DS_Store
