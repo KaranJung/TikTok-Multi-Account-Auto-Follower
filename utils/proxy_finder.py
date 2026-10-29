@@ -27,6 +27,10 @@ from rich import box
 from utils.logger import log_info, log_success, log_warning, log_error, console
 
 PROXY_SOURCES: List[Dict[str, Any]] = [
+    {"name": "ProxyDB HTTPS CONNECT",    "format": "proxydb", "url": "https://proxydb.net/?protocol=https&country="},
+    {"name": "ProxyDB HTTPS (Page 2)",   "format": "proxydb", "url": "https://proxydb.net/?protocol=https&country=&offset=15"},
+    {"name": "ProxyDB SOCKS5 Pool",      "format": "proxydb", "scheme": "socks5", "url": "https://proxydb.net/?protocol=socks5&country="},
+    {"name": "ProxyDB HTTP Pool",        "format": "proxydb", "url": "https://proxydb.net/?protocol=http&country="},
     {"name": "FlashProxy API (1000)",     "limit": 1000, "url": "https://www.flashproxy.com/api/proxies/txt?limit=1000"},
     {"name": "ProxyScrape HTTPS CONNECT API", "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&ssl=yes&timeout=3000&limit=350&proxy_format=protocolipport&format=text"},
     {"name": "ProxyScrape SOCKS5 API", "scheme": "socks5", "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=socks5&timeout=3000&limit=350&proxy_format=protocolipport&format=text"},
@@ -99,6 +103,12 @@ def _extract_proxies_from_payload(
             if any(protocol in ("http", "https") for protocol in protocols):
                 candidates.append(f"http://{row.get('ip')}:{row.get('port')}")
     else:
+        # Extract ProxyDB-style href links: /ip/port#protocol
+        for ip, port, proto in re.findall(
+            r'href="/(\d{1,3}(?:\.\d{1,3}){3})/(\d{2,5})#(https?|socks4|socks5)"', text, re.IGNORECASE
+        ):
+            scheme = "http" if proto.lower() in ("http", "https") else proto.lower()
+            candidates.append(f"{scheme}://{ip}:{port}")
         for ip, port in re.findall(r"<tr[^>]*>\s*<td[^>]*>\s*(\d{1,3}(?:\.\d{1,3}){3})\s*</td>\s*<td[^>]*>\s*(\d{1,5})\s*</td>", text, re.IGNORECASE):
             candidates.append(f"{ip}:{port}")
         candidates.extend(re.findall(
