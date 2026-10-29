@@ -156,6 +156,14 @@ class TikTokFollowBot:
             if blocked:
                 return blocked
             self._dismiss_popups(page)
+
+            # Wait for webmssdk to mint security tokens (msToken / ttwid)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 4.0:
+                cookie_names = {c["name"] for c in page.context.cookies()}
+                if "msToken" in cookie_names or "ttwid" in cookie_names:
+                    break
+                page.wait_for_timeout(300)
             return None
         except Exception as exc:
             log_warning(f"Session page could not be loaded: {type(exc).__name__}; cookies preserved.")
@@ -517,9 +525,10 @@ class TikTokFollowBot:
                     return result
 
                 # Evaluate backend API response:
-                # ONLY reject immediately if the backend returned an explicit non-zero error code (e.g. 2049 = rate limited)
+                # Check status_code and follow_status
                 if api_result["received"]:
                     sc = api_result["status_code"]
+                    fs = api_result["follow_status"]
                     msg = api_result["msg"]
                     if sc is not None and sc != 0:
                         err_msg = msg or f"code {sc}"
@@ -527,8 +536,17 @@ class TikTokFollowBot:
                         result["action"] = "Action Blocked"
                         result["detail"] = f"Backend rejected: {err_msg}"
                         return result
+                    elif fs == 0:
+                        log_warning("TikTok backend rejected follow (follow_status=0; IP rate-limited or shadow-dropped).")
+                        result["action"] = "Shadow-Dropped"
+                        result["detail"] = "Rejected by TikTok backend (follow_status=0)"
+                        return result
+                    elif sc == 0 and fs in (1, 2):
+                        log_info(f"TikTok backend confirmed follow (status_code=0, follow_status={fs}).")
+                    elif sc == 0 and fs == 3:
+                        log_info("TikTok backend confirmed follow request for private account (follow_status=3).")
                     elif sc == 0:
-                        log_info("TikTok backend confirmed follow request (status_code=0).")
+                        log_info(f"TikTok backend responded with status_code=0, follow_status={fs}.")
                     else:
                         log_info("Backend follow call detected. Verifying persistence via profile reload...")
                 else:
@@ -585,10 +603,10 @@ class TikTokFollowBot:
                 else:
                     log_warning(
                         f"Follow not verified after reload (relation={server_relation}, button={persisted_state}). "
-                        "The response does not establish a cause; no automatic retry."
+                        "Proxy IP or account was shadow-dropped by TikTok."
                     )
-                    result["action"] = "Verification Inconclusive"
-                    result["detail"] = f"Not verified (relation={server_relation}, button={persisted_state})"
+                    result["action"] = "Shadow-Dropped"
+                    result["detail"] = f"Reverted by TikTok (relation={server_relation}, button={persisted_state})"
 
                 return result
 
@@ -597,7 +615,14 @@ class TikTokFollowBot:
                 if page.is_closed():
                     result.update(action="Browser Closed", detail="Browser closed before verification; cookies preserved")
                     return result
-                if any(k in err_msg for k in ("ERR_PROXY", "ERR_TUNNEL", "ERR_CERT", "ERR_SSL", "ERR_HTTP_RESPONSE_CODE_FAILURE", "ERR_CONNECTION_RESET", "ERR_CONNECTION_TIMED_OUT", "ERR_CONNECTION_CLOSED")):
+                if any(k in err_msg for k in (
+                    "ERR_PROXY", "ERR_TUNNEL", "ERR_CERT", "ERR_SSL",
+                    "ERR_HTTP_RESPONSE_CODE_FAILURE", "ERR_CONNECTION_RESET",
+                    "ERR_CONNECTION_TIMED_OUT", "ERR_CONNECTION_CLOSED",
+                    "ERR_TIMED_OUT", "ERR_CONNECTION_REFUSED",
+                    "ERR_NAME_NOT_RESOLVED", "ERR_ADDRESS_UNREACHABLE",
+                    "TimeoutError", "Timeout "
+                )):
                     log_error(f"Proxy network error for {account_name}: {err_msg[:80]}")
                     result["action"] = "Proxy Failed"
                     result["detail"] = f"Proxy error: {err_msg[:40]}"

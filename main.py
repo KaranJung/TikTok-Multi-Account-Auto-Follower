@@ -327,7 +327,7 @@ def main():
                 log_error(f"Could not delete {file_path.name}: {exc}")
                 res["detail"] = f"Session expired; file deletion failed: {exc}"
         elif res["action"] in ("Proxy Failed", "Proxy Blocked", "Cloudflare Blocked", "Captcha Triggered",
-                               "Rate Limited", "Access Blocked", "Cookie Error", "Verification Inconclusive"):
+                               "Rate Limited", "Access Blocked", "Cookie Error", "Verification Inconclusive", "Shadow-Dropped"):
             log_warning(f"Preserving cookie file for {account_name}: this outcome does not prove the session expired.")
 
         with results_lock:
