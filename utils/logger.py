@@ -78,8 +78,8 @@ def print_header(proxy_count: int = 0, account_count: int = 0, animated: bool = 
 
     # Subtitle and feature line
     sub = Text.from_markup(
-        "[bold white]MULTI-ACCOUNT AUTO-FOLLOWER[/bold white] [bold #FE2C55]•[/bold #FE2C55] [bold #25F4EE]STEALTH v2.5[/bold #25F4EE]\n"
-        "[dim]Automated Session Injection  •  Cloudflare JA3 Bypass  •  Anti-Ban Engine[/dim]"
+        "[bold white]MULTI-ACCOUNT AUTO-FOLLOWER[/bold white] [bold #FE2C55]•[/bold #FE2C55] [bold #25F4EE]NATIVE BROWSER[/bold #25F4EE]\n"
+        "[dim]Cookie Sessions  •  Native Browser Identity  •  Manual Security Checks[/dim]"
     )
 
     # Live System Status Matrix
@@ -90,7 +90,7 @@ def print_header(proxy_count: int = 0, account_count: int = 0, animated: bool = 
     grid.add_column(style="white", justify="left")
 
     p_badge = (
-        f"[bold green]{proxy_count} active (proxies.txt)[/bold green]"
+        f"[bold green]{proxy_count} saved (proxies.txt)[/bold green]"
         if proxy_count > 0
         else "[yellow]Direct Network[/yellow]"
     )
@@ -101,8 +101,8 @@ def print_header(proxy_count: int = 0, account_count: int = 0, animated: bool = 
     )
 
     grid.add_row("CREATOR  :", "[bold white]@hydra_X001[/bold white]", "TELEGRAM :", "[bold yellow]https://t.me/hydrax001[/bold yellow]")
-    grid.add_row("STEALTH  :", "[green]Chrome 131 TLS / JA3 Spoof[/green]", "PROXIES  :", p_badge)
-    grid.add_row("ENGINE   :", "[green]Playwright Chromium + Stealth[/green]", "SESSIONS :", a_badge)
+    grid.add_row("IDENTITY :", "[green]Native browser defaults[/green]", "PROXIES  :", p_badge)
+    grid.add_row("ENGINE   :", "[green]Playwright Chromium[/green]", "SESSIONS :", a_badge)
 
     panel_content = Group(
         Text(""),
@@ -132,8 +132,8 @@ def print_header(proxy_count: int = 0, account_count: int = 0, animated: bool = 
         # Step 2: Animated rapid system diagnostics HUD
         time.sleep(0.08)
         diag_steps = [
-            ("[*]", "[bold #25F4EE]Chrome 131 TLS / JA3 Spoof[/bold #25F4EE]", "[bold green]ONLINE[/bold green]"),
-            ("[*]", "[bold #FE2C55]Playwright Stealth Evasions[/bold #FE2C55]", "[bold green]ARMED[/bold green]"),
+            ("[*]", "[bold #25F4EE]Native UA / Client Hints[/bold #25F4EE]", "[bold green]DEFAULT[/bold green]"),
+            ("[*]", "[bold #FE2C55]Security Challenge Handling[/bold #FE2C55]", "[bold yellow]MANUAL[/bold yellow]"),
             ("[*]", "[bold white]Session Vault & Proxy Router[/bold white]", "[bold green]ACTIVE[/bold green]"),
         ]
 
@@ -171,7 +171,8 @@ def print_summary_table(results: List[Dict[str, Any]]):
             "green"
             if r["action"] in ["Followed", "Already Following"]
             else "yellow"
-            if r["action"] in ["Skipped", "Captcha Triggered", "Requested", "Cloudflare Blocked", "Proxy Failed"]
+            if r["action"] in ["Skipped", "Captcha Triggered", "Requested", "Cloudflare Blocked", "Proxy Failed",
+                                           "Rate Limited", "Access Blocked", "Verification Inconclusive"]
             else "red"
         )
 

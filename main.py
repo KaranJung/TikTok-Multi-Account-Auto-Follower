@@ -54,12 +54,19 @@ def main():
     parser.add_argument("-t", "--target", type=str, help="Target TikTok profile URL or @username")
     parser.add_argument("-c", "--cookies", type=str, help="Path to the folder containing .txt or .json cookie files")
     parser.add_argument("-w", "--concurrency", type=int, default=None, help="Number of concurrent browsers to run (default: 1)")
-    parser.add_argument("-p", "--proxy", type=str, default=None, help="Path to proxy file (proxies.txt) or single proxy string (optional)")
+    proxy_group = parser.add_mutually_exclusive_group()
+    proxy_group.add_argument("-p", "--proxy", type=str, default=None, help="Path to proxy file (proxies.txt) or single proxy string (optional)")
+    proxy_group.add_argument("--direct", action="store_true", help="Use a direct connection without loading proxies")
+    parser.add_argument("--challenge-timeout", type=int, default=120, help="Seconds to wait for manual security checks in visible mode (default: 120)")
     parser.add_argument("--headless", dest="headless", action="store_true", default=None, help="Run browser in headless mode (no window)")
     parser.add_argument("--visible", dest="headless", action="store_false", help="Run browser in visible window mode")
     parser.add_argument("--delay", type=float, default=None, help="Cooldown delay (in seconds) between accounts (default: 15.0)")
 
     args = parser.parse_args()
+    if args.challenge_timeout < 0:
+        parser.error("--challenge-timeout must be non-negative")
+    if args.concurrency is not None and not 1 <= args.concurrency <= 20:
+        parser.error("--concurrency must be between 1 and 20")
 
     # Pre-detect proxies and cookie accounts for live status in the banner
     default_proxy_file = Path("proxies.txt")
@@ -152,7 +159,7 @@ def main():
     headless = args.headless
     if headless is None:
         console.print("\n[bold #25F4EE]Select Browser Display Mode:[/bold #25F4EE]")
-        console.print("  [bold green]1.[/bold green] Visible Browser Window [dim](Default / Recommended • Reduces CAPTCHAs & lets you observe)[/dim]")
+        console.print("  [bold green]1.[/bold green] Visible Browser Window [dim](Default / Recommended • Allows manual security checks)[/dim]")
         console.print("  [bold yellow]2.[/bold yellow] Headless Mode          [dim](Silent background execution, no visible window)[/dim]")
         mode_choice = console.input("[bold #25F4EE]Enter choice [1/2][/bold #25F4EE] (default: [green]1[/green]): ").strip().lower()
         headless = mode_choice in ("2", "headless", "h", "no", "n")
@@ -177,9 +184,11 @@ def main():
             concurrency = 1
 
     log_info(f"Concurrency set to: [bold green]{concurrency}[/bold green] browser worker(s)")
+    if concurrency > 1:
+        log_warning("Use one worker while diagnosing security challenges. Running workers may finish before a batch stop.")
 
     # 5. Proxy Configuration
-    proxy_input = args.proxy
+    proxy_input = "" if args.direct else args.proxy
     if proxy_input is None:
         auto_proxies = load_proxies(str(default_proxy_file)) if default_proxy_file.exists() else []
 
@@ -231,6 +240,7 @@ def main():
 
     if proxies:
         log_info(f"Loaded [bold green]{len(proxies)}[/bold green] proxy/proxies. Rotating round-robin across accounts.")
+        log_warning("Public proxies may trigger security checks even after a page-load test. Use --direct to diagnose without a proxy.")
     else:
         log_info("No proxies configured. Running on direct connection.")
 
@@ -238,7 +248,7 @@ def main():
     delay = args.delay
     if delay is None:
         console.print("\n[bold #25F4EE]Cooldown Delay:[/bold #25F4EE]")
-        console.print("  [dim]Tip: 10-20s cooldown prevents shadow-drops by TikTok due to single-IP rate limits.[/dim]")
+        console.print("  [dim]Cooldowns space out requests but do not guarantee acceptance. Security blocks stop queued accounts.[/dim]")
         delay_input = console.input(
             "[bold #25F4EE]Enter cooldown delay between follows in seconds[/bold #25F4EE] (default: [green]15.0[/green]): "
         ).strip()
@@ -255,7 +265,7 @@ def main():
     log_info(f"Ready to process [bold green]{len(files)}[/bold green] account(s). Starting automation...")
 
     # 7. Execute Bot Workers
-    bot = TikTokFollowBot(headless=headless)
+    bot = TikTokFollowBot(headless=headless, challenge_timeout=args.challenge_timeout)
     results = []
     results_lock = threading.Lock()
     total_files = len(files)
@@ -263,6 +273,12 @@ def main():
     def worker_task(item):
         index, file_path = item
         account_name = file_path.name
+        if bot.stop_event.is_set():
+            res = {"account": account_name, "status": "Unknown", "action": "Skipped",
+                   "detail": "Not started: batch stopped after a security block"}
+            with results_lock:
+                results.append(res)
+            return res
 
         # Rotate proxy if proxies list is provided
         proxy = proxies[(index - 1) % len(proxies)] if proxies else None
@@ -284,12 +300,22 @@ def main():
             return res
 
         # Run browser automation
-        res = bot.process_account(
-            account_name=account_name,
-            cookies=cookies,
-            target_profile_url=target_url,
-            proxy=proxy
-        )
+        try:
+            res = bot.process_account(
+                account_name=account_name,
+                cookies=cookies,
+                target_profile_url=target_url,
+                proxy=proxy
+            )
+        except Exception as exc:
+            res = {"account": account_name, "status": "Unknown", "action": "Browser Error",
+                   "detail": f"Browser setup failed ({type(exc).__name__}); cookies preserved"}
+            log_error(res["detail"])
+
+        if res["action"] in ("Cloudflare Blocked", "Captcha Triggered", "Rate Limited",
+                             "Access Blocked", "Action Blocked", "Browser Closed", "Browser Error"):
+            bot.stop_event.set()
+            log_warning("Stopping queued accounts after a security block or browser interruption. No automatic retry.")
 
         # Delete expired cookie files ONLY if session is verified Dead by TikTok
         # NEVER delete on temporary proxy drops, TLS errors, or rate blocks
@@ -301,21 +327,22 @@ def main():
             except OSError as exc:
                 log_error(f"Could not delete {file_path.name}: {exc}")
                 res["detail"] = f"Session expired; file deletion failed: {exc}"
-        elif res["status"] in ("Proxy Failed", "Proxy Blocked"):
-            log_warning(f"Preserving cookie file for {account_name} due to proxy error (session is not dead).")
+        elif res["action"] in ("Proxy Failed", "Proxy Blocked", "Cloudflare Blocked", "Captcha Triggered",
+                               "Rate Limited", "Access Blocked", "Cookie Error", "Verification Inconclusive"):
+            log_warning(f"Preserving cookie file for {account_name}: this outcome does not prove the session expired.")
 
         with results_lock:
             results.append(res)
 
         # Cooldown between accounts:
         # ONLY wait full cooldown if a new follow was actually performed.
-        # If already following, dead, or skipped, proceed immediately without stalling!
-        if res.get("action") == "Followed" and delay > 0 and index < total_files:
+        # If proxy failed, dead session, or skipped, proceed immediately to the next account!
+        if res.get("action") == "Followed" and not bot.stop_event.is_set() and delay > 0 and index < total_files:
             log_info(f"Waiting {delay}s cooldown before next follow on this worker...")
-            time.sleep(delay)
+            bot.stop_event.wait(delay)
         elif res.get("action") == "Already Following":
             log_info("Account already following target; skipping cooldown to proceed immediately.")
-            time.sleep(0.5)
+            bot.stop_event.wait(0.5)
 
         return res
 
@@ -330,7 +357,10 @@ def main():
 
     # 8. Print Summary Table
     print_summary_table(results)
-    log_success("All account automation tasks finished!")
+    if bot.stop_event.is_set():
+        log_warning("Batch stopped. Resolve the reported issue before starting another run.")
+    else:
+        log_info("Account processing finished. See the summary for verified outcomes.")
 
 
 if __name__ == "__main__":

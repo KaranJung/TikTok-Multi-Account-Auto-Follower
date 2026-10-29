@@ -10,8 +10,12 @@ No emojis used.
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 import time
+from ipaddress import IPv4Address
+from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -23,39 +27,90 @@ from rich import box
 from utils.logger import log_info, log_success, log_warning, log_error, console
 
 PROXY_SOURCES: List[Dict[str, str]] = [
-    {"name": "ProxyScrape HTTP API",     "url": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=elite"},
-    {"name": "ProxyScrape SOCKS5 API",   "url": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=5000&country=all"},
+    {"name": "ProxyScrape HTTPS CONNECT API", "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&ssl=yes&timeout=3000&limit=350&proxy_format=protocolipport&format=text"},
+    {"name": "ProxyScrape SOCKS5 API", "scheme": "socks5", "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=socks5&timeout=3000&limit=350&proxy_format=protocolipport&format=text"},
+    {"name": "GeoNode HTTPS CONNECT API", "format": "geonode", "url": "https://proxylist.geonode.com/api/proxy-list?limit=350&page=1&sort_by=latency&sort_type=asc&protocols=https"},
+    {"name": "Proxifly HTTPS Stream", "scheme": "https", "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/https/data.txt"},
+    {"name": "IPLocate HTTP Pool", "url": "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt"},
+    {"name": "IPLocate HTTPS Pool", "scheme": "https", "url": "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/https.txt"},
+    {"name": "Zaeem20 HTTPS CONNECT Pool", "url": "https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/https.txt"},
     {"name": "SSLProxies.org",           "url": "https://www.sslproxies.org/"},
     {"name": "FreeProxyList.net",        "url": "https://free-proxy-list.net/"},
     {"name": "US-Proxy.org",             "url": "https://www.us-proxy.org/"},
     {"name": "Anonymous Proxies",        "url": "https://free-proxy-list.net/anonymous-proxy.html"},
     {"name": "Spys.me Live HTTP",        "url": "https://spys.me/proxy.txt"},
-    {"name": "Spys.me Live SOCKS",       "url": "https://spys.me/socks.txt"},
+    {"name": "Spys.me Live SOCKS",       "scheme": "socks5", "url": "https://spys.me/socks.txt"},
     {"name": "Proxifly HTTP Stream",     "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt"},
-    {"name": "Proxifly SOCKS5 Stream",   "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt"},
+    {"name": "Proxifly SOCKS5 Stream",   "scheme": "socks5", "url": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt"},
     {"name": "TheSpeedX HTTP Pool",      "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"},
-    {"name": "TheSpeedX SOCKS5 Pool",    "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"},
+    {"name": "TheSpeedX SOCKS5 Pool",    "scheme": "socks5", "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"},
     {"name": "Monosans Checked Pool",    "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"},
-    {"name": "Monosans SOCKS5 Pool",     "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt"},
+    {"name": "Monosans SOCKS5 Pool",     "scheme": "socks5", "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt"},
     {"name": "Vakhov Fresh Proxies",     "url": "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/https.txt"},
-    {"name": "Vakhov SOCKS5 Proxies",    "url": "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt"},
+    {"name": "Vakhov SOCKS5 Proxies",    "scheme": "socks5", "url": "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt"},
     {"name": "RoosterKid HTTPS",         "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt"},
-    {"name": "RoosterKid SOCKS5",        "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt"},
+    {"name": "RoosterKid SOCKS5",        "scheme": "socks5", "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt"},
 ]
 
 PROFILE_TEST_URL       = "https://www.tiktok.com/@tiktok"
 TEST_TIMEOUT           = 6
+MAX_PROXY_LATENCY      = 2.5
 MAX_TEST_WORKERS       = 80
 MAX_COLLECT_PER_SOURCE = 350
 MAX_WORKING            = 30
 
 
-def _extract_proxies_from_payload(text: str) -> List[str]:
-    found = set()
-    for ip, port in re.findall(r"<tr>\s*<td>(\d{1,3}(?:\.\d{1,3}){3})</td>\s*<td>(\d{2,5})</td>", text, re.IGNORECASE):
-        found.add(f"{ip}:{port}")
-    for match in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b", text):
-        found.add(match)
+def _normalize_candidate(value: str, default_scheme: str = "http") -> Optional[str]:
+    try:
+        parsed = urlsplit(value if "://" in value else f"{default_scheme}://{value}")
+        if parsed.scheme not in ("http", "https", "socks4", "socks5"):
+            return None
+        address = IPv4Address(parsed.hostname or "")
+        port = parsed.port
+        if not address.is_global or address.is_multicast or address.is_reserved:
+            return None
+        if not port or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            return None
+        return f"{parsed.scheme}://{address}:{port}"
+    except ValueError:
+        return None
+
+
+def _extract_proxies_from_payload(
+    text: str, default_scheme: str = "http", source_format: str = "text"
+) -> List[str]:
+    candidates = []
+    if source_format == "geonode":
+        try:
+            payload = json.loads(text)
+        except (ValueError, TypeError):
+            return []
+        rows = payload.get("data", []) if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            return []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            protocols = row.get("protocols", [])
+            if not isinstance(protocols, list):
+                continue
+            # GeoNode labels HTTP CONNECT support as HTTPS, not TLS-to-proxy.
+            if any(protocol in ("http", "https") for protocol in protocols):
+                candidates.append(f"http://{row.get('ip')}:{row.get('port')}")
+    else:
+        for ip, port in re.findall(r"<tr[^>]*>\s*<td[^>]*>\s*(\d{1,3}(?:\.\d{1,3}){3})\s*</td>\s*<td[^>]*>\s*(\d{1,5})\s*</td>", text, re.IGNORECASE):
+            candidates.append(f"{ip}:{port}")
+        candidates.extend(re.findall(
+            r"(?<![\w.:/@-])(?:[a-z][a-z0-9+.-]*://)?\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}(?![\w.:/@-])",
+            text, re.IGNORECASE,
+        ))
+
+    # Preserve feed ordering while deduplicating protocol-aware endpoints.
+    found = {}
+    for value in candidates:
+        server = _normalize_candidate(value, default_scheme)
+        if server:
+            found.setdefault(server, None)
     return list(found)
 
 
@@ -63,59 +118,62 @@ def _fetch_from_source(source: Dict[str, str]) -> List[str]:
     url = source["url"]
     try:
         from curl_cffi import requests as cffi
-        s = cffi.Session(impersonate="chrome131")
-        s.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-        r = s.get(url, timeout=10)
-        if r.status_code != 200:
-            return []
-        items = _extract_proxies_from_payload(r.text)
-        return items[:MAX_COLLECT_PER_SOURCE]
+        with cffi.Session(impersonate="chrome131") as session:
+            response = session.get(url, timeout=10, verify=True)
+            if response.status_code != 200:
+                log_warning(f"Proxy source {source['name']}: HTTP {response.status_code}")
+                return []
+            items = _extract_proxies_from_payload(
+                response.text, source.get("scheme", "http"), source.get("format", "text")
+            )
+            return items[:MAX_COLLECT_PER_SOURCE]
     except Exception:
         return []
 
 
-def _test_proxy_on_tiktok(proxy_str: str) -> Optional[Dict[str, Any]]:
+def _test_proxy_on_tiktok(
+    proxy_str: str, max_latency: float = MAX_PROXY_LATENCY
+) -> Optional[Dict[str, Any]]:
     """
     Strictly verifies that the proxy:
     1. Supports HTTPS CONNECT tunneling to www.tiktok.com without MITM gateway injection
     2. Returns authentic TikTok HTML content (tiktok / ttwstatic / __UNIVERSAL_DATA_FOR_REHYDRATION__)
     3. Is not blocked with 403 Forbidden or Access Denied
     """
-    raw = proxy_str.split("://")[-1].strip()
-    schemes = ["http", "socks5"]
-
-    for scheme in schemes:
-        server = f"{scheme}://{raw}"
-        try:
-            from curl_cffi import requests as cffi
-            s = cffi.Session(impersonate="chrome131")
-            s.proxies = {"http": server, "https": server}
-            s.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-            })
+    server = _normalize_candidate(proxy_str.strip())
+    if not server or not math.isfinite(max_latency) or max_latency <= 0:
+        return None
+    try:
+        from curl_cffi import requests as cffi
+        # No account cookies are sent during public proxy checks.
+        with cffi.Session(impersonate="chrome131", trust_env=False) as session:
+            session.proxies = {"http": server, "https": server}
             t0 = time.monotonic()
-            r = s.get(PROFILE_TEST_URL, timeout=TEST_TIMEOUT, verify=False)
+            r = session.get(
+                PROFILE_TEST_URL, timeout=min(TEST_TIMEOUT, max_latency),
+                verify=True, allow_redirects=False,
+            )
             latency = time.monotonic() - t0
+            body = r.text.lower()
+            final_url = urlsplit(r.url)
 
             # Validates genuine TikTok response
             is_valid_tiktok = (
                 r.status_code == 200
-                and ("tiktok" in r.text.lower() or "ttwstatic" in r.text.lower() or "__universal_data_for_rehydration__" in r.text.lower())
-                and "forbidden" not in r.text.lower()
-                and "access denied" not in r.text.lower()
+                and final_url.scheme == "https"
+                and final_url.hostname == "www.tiktok.com"
+                and ("ttwstatic" in body or "__universal_data_for_rehydration__" in body)
+                and "forbidden" not in body
+                and "access denied" not in body
+                and "verify you are human" not in body
                 and len(r.text) > 400
+                and latency <= max_latency
             )
 
             if is_valid_tiktok:
-                return {"server": server, "_latency": round(latency, 2)}
-        except Exception:
-            pass
+                return {"server": server, "_latency": round(latency, 3)}
+    except Exception:
+        pass
     return None
 
 
@@ -162,7 +220,12 @@ def _print_proxy_table(working: List[Dict[str, Any]]) -> None:
 def collect_and_test_proxies(
     min_working: int = 5,
     max_working: int = MAX_WORKING,
+    max_latency: float = MAX_PROXY_LATENCY,
 ) -> List[Dict[str, Any]]:
+    if not 1 <= min_working <= max_working:
+        raise ValueError("Require 1 <= min_working <= max_working")
+    if not math.isfinite(max_latency) or max_latency <= 0:
+        raise ValueError("max_latency must be a positive finite number")
     console.print("\n[bold #25F4EE]PLEASE WAIT WE ARE TESTING AND COLLECTING PROXIES[/bold #25F4EE]\n")
 
     raw_candidates: List[str] = []
@@ -172,6 +235,7 @@ def collect_and_test_proxies(
             try:
                 batch = fut.result()
                 raw_candidates.extend(batch)
+                log_info(f"{futures[fut]['name']}: {len(batch)} candidates")
             except Exception:
                 pass
 
@@ -186,7 +250,7 @@ def collect_and_test_proxies(
         log_error("Could not fetch any proxy candidates. Please check internet connection.")
         return []
 
-    log_info(f"Scraped {len(unique)} unique proxy candidates. Filtering for genuine TikTok HTTPS support...")
+    log_info(f"Scraped {len(unique)} unique proxy candidates. Checking TikTok HTTPS access within {max_latency:.1f}s...")
 
     working_with_latency: List[Dict[str, Any]] = []
     tested = 0
@@ -194,11 +258,8 @@ def collect_and_test_proxies(
     last_reported_milestone = 0
 
     with ThreadPoolExecutor(max_workers=MAX_TEST_WORKERS) as pool:
-        futures_map = {pool.submit(_test_proxy_on_tiktok, p): p for p in unique}
+        futures_map = {pool.submit(_test_proxy_on_tiktok, p, max_latency): p for p in unique}
         for fut in as_completed(futures_map):
-            if stop_early:
-                fut.cancel()
-                continue
             tested += 1
             try:
                 result = fut.result()
@@ -224,6 +285,11 @@ def collect_and_test_proxies(
                     f"[dim]({working_count} active proxies ready)[/dim]"
                 )
 
+            if stop_early:
+                for pending in futures_map:
+                    pending.cancel()
+                break
+
     if working_with_latency and last_reported_milestone < 100:
         while last_reported_milestone < 100:
             last_reported_milestone += 10
@@ -246,10 +312,13 @@ def collect_and_test_proxies(
 
     if working:
         log_success(
-            f"[bold green]{len(working)}[/bold green] working proxies verified on TikTok and ready for rotation."
+            f"[bold green]{len(working)}[/bold green] proxies passed the TikTok HTTPS page check within {max_latency:.1f}s, sorted fastest first."
         )
+        if len(working) < min_working:
+            log_warning(f"Only {len(working)} of the requested minimum {min_working} proxies passed.")
+        log_warning("Public proxies are untrusted and can expire quickly. Page access does not guarantee login or follow success.")
     else:
-        log_warning("No free public proxies passed strict TikTok verification. Residential/rotating proxies are strongly recommended.")
+        log_warning(f"No public proxies passed the verified TikTok HTTPS page check within {max_latency:.1f}s. Existing proxy files were not changed.")
 
     return working
 
