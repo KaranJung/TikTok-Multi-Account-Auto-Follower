@@ -183,7 +183,7 @@ def scan_cookie_metadata(file_path: Path) -> Dict[str, Any]:
     return record
 
 
-def audit_account_live(record: Dict[str, Any], browser_context, timeout: int = 25) -> Dict[str, Any]:
+def audit_account_live(record: Dict[str, Any], timeout: int = 25) -> Dict[str, Any]:
     file_path = Path(record["file_path"])
     try:
         cookies = parse_cookie_file(file_path)
@@ -191,87 +191,98 @@ def audit_account_live(record: Dict[str, Any], browser_context, timeout: int = 2
         record["status"] = "Invalid File"
         return record
 
+    from playwright.sync_api import sync_playwright
     username = record["username"]
-    page = browser_context.new_page()
     try:
-        browser_context.clear_cookies()
-        browser_context.add_cookies(cookies)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--mute-audio", "--no-sandbox"]
+            )
+            clean_ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{browser.version} Safari/537.36"
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900},
+                user_agent=clean_ua
+            )
+            context.add_cookies(cookies)
+            page = context.new_page()
 
-        # Audit profile page
-        target_url = f"https://www.tiktok.com/@{username}" if username != "Unknown" else "https://www.tiktok.com/"
-        page.goto(target_url, wait_until="domcontentloaded", timeout=timeout * 1000)
-        page.wait_for_timeout(3500)
+            # Audit profile page
+            target_url = f"https://www.tiktok.com/@{username}" if username != "Unknown" else "https://www.tiktok.com/"
+            page.goto(target_url, wait_until="domcontentloaded", timeout=timeout * 1000)
+            page.wait_for_timeout(3500)
 
-        data = page.evaluate("""() => {
-            try {
-                const body = document.body ? document.body.innerText.toLowerCase() : '';
-                const isDeactivated = body.includes("couldn't find this account") ||
-                                      body.includes("account not found") ||
-                                      body.includes("user does not exist") ||
-                                      body.includes("account is currently unavailable");
+            data = page.evaluate("""() => {
+                try {
+                    const body = document.body ? document.body.innerText.toLowerCase() : '';
+                    const isDeactivated = body.includes("couldn't find this account") ||
+                                          body.includes("account not found") ||
+                                          body.includes("user does not exist") ||
+                                          body.includes("account is currently unavailable");
 
-                const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
-                if (!el) {
-                    return { isDeactivated, hasHydration: false };
+                    const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+                    if (!el) {
+                        return { isDeactivated, hasHydration: false };
+                    }
+                    const d = JSON.parse(el.textContent);
+                    const scope = d?.['__DEFAULT_SCOPE__'] || {};
+                    const ud = scope?.['webapp.user-detail'];
+                    const user = ud?.userInfo?.user;
+                    const stats = ud?.userInfo?.stats;
+                    const appUser = scope?.['webapp.app-context']?.user;
+                    const statusCode = ud?.statusCode;
+
+                    const deactivatedFlag = isDeactivated || statusCode === 10221 || statusCode === 10202;
+                    return {
+                        isDeactivated: deactivatedFlag,
+                        hasHydration: true,
+                        loggedIn: !!(appUser && appUser.uid),
+                        appUid: appUser ? String(appUser.uid) : null,
+                        username: user?.uniqueId || appUser?.uniqueId || null,
+                        nickname: user?.nickname || appUser?.nickName || null,
+                        followers: stats?.followerCount ?? 0,
+                        following: stats?.followingCount ?? 0,
+                        likes: stats?.heartCount ?? 0,
+                        videos: stats?.videoCount ?? 0,
+                        private: !!user?.secret
+                    };
+                } catch (e) {
+                    return { error: String(e) };
                 }
-                const d = JSON.parse(el.textContent);
-                const scope = d?.['__DEFAULT_SCOPE__'] || {};
-                const ud = scope?.['webapp.user-detail'];
-                const user = ud?.userInfo?.user;
-                const stats = ud?.userInfo?.stats;
-                const appUser = scope?.['webapp.app-context']?.user;
-                const statusCode = ud?.statusCode;
+            }""")
 
-                const deactivatedFlag = isDeactivated || statusCode === 10221 || statusCode === 10202;
-                return {
-                    isDeactivated: deactivatedFlag,
-                    hasHydration: true,
-                    loggedIn: !!(appUser && appUser.uid),
-                    appUid: appUser ? String(appUser.uid) : null,
-                    username: user?.uniqueId || appUser?.uniqueId || null,
-                    nickname: user?.nickname || appUser?.nickName || null,
-                    followers: stats?.followerCount ?? 0,
-                    following: stats?.followingCount ?? 0,
-                    likes: stats?.heartCount ?? 0,
-                    videos: stats?.videoCount ?? 0,
-                    private: !!user?.secret
-                };
-            } catch (e) {
-                return { error: String(e) };
-            }
-        }""")
+            if data.get("isDeactivated"):
+                record["deactivated"] = True
+                record["status"] = "Deactivated / Banned"
+                record["detail"] = "Account deleted, banned, or not found on TikTok"
+            elif data.get("loggedIn"):
+                record["status"] = "Active"
+                record["followers"] = data.get("followers", 0)
+                record["following"] = data.get("following", 0)
+                record["likes"] = data.get("likes", 0)
+                record["videos"] = data.get("videos", 0)
+                record["is_private"] = data.get("private", False)
+                if data.get("username"):
+                    record["username"] = data["username"]
+                if data.get("appUid"):
+                    record["uid"] = data["appUid"]
+                record["detail"] = f"Followers: {record['followers']} | Following: {record['following']} | Videos: {record['videos']}"
+            elif "/login" in page.url or data.get("hasHydration") is True:
+                record["status"] = "Expired Session"
+                record["detail"] = "Session credentials expired or logged out"
+            else:
+                record["status"] = "Active (Unconfirmed)"
+                record["detail"] = "Profile loaded; full hydration state pending"
 
-        if data.get("isDeactivated"):
-            record["deactivated"] = True
-            record["status"] = "Deactivated / Banned"
-            record["detail"] = "Account deleted, banned, or not found on TikTok"
-        elif data.get("loggedIn"):
-            record["status"] = "Active"
-            record["followers"] = data.get("followers", 0)
-            record["following"] = data.get("following", 0)
-            record["likes"] = data.get("likes", 0)
-            record["videos"] = data.get("videos", 0)
-            record["is_private"] = data.get("private", False)
-            if data.get("username"):
-                record["username"] = data["username"]
-            if data.get("appUid"):
-                record["uid"] = data["appUid"]
-            record["detail"] = f"Followers: {record['followers']} | Following: {record['following']} | Videos: {record['videos']}"
-        elif "/login" in page.url or data.get("hasHydration") is True:
-            record["status"] = "Expired Session"
-            record["detail"] = "Session credentials expired or logged out"
-        else:
-            record["status"] = "Active (Unconfirmed)"
-            record["detail"] = "Profile loaded; full hydration state pending"
+            try:
+                context.close()
+                browser.close()
+            except Exception:
+                pass
 
     except Exception as e:
         record["status"] = "Audit Error"
         record["detail"] = f"Browser evaluation failed: {type(e).__name__}"
-    finally:
-        try:
-            page.close()
-        except Exception:
-            pass
 
     return record
 
@@ -302,28 +313,29 @@ def display_results_table(records: List[Dict[str, Any]], deep: bool = False):
         expand=False
     )
     table.add_column("#", style="dim", justify="right", width=4)
-    table.add_column("Account File", style="white", justify="left", min_width=24)
-    table.add_column("Username", style="bold #25F4EE", justify="left", min_width=15)
-    table.add_column("Country (store-country-code)", style="bold yellow", justify="center", width=18)
-    table.add_column("Datacenter (tt-target-idc)", style="cyan", justify="center", width=18)
-    table.add_column("Status", justify="center", width=16)
+    table.add_column("Account File", style="white", justify="left", max_width=26)
+    table.add_column("Username", style="bold #25F4EE", justify="left", max_width=18)
+    table.add_column("Country", style="bold yellow", justify="center", width=18)
+    table.add_column("Datacenter", style="cyan", justify="center", width=12)
+    table.add_column("Status", justify="center", width=18)
 
     if deep:
         table.add_column("Followers", style="green", justify="right", width=10)
         table.add_column("Following", style="white", justify="right", width=10)
         table.add_column("Videos", style="white", justify="right", width=8)
 
-    table.add_column("Details", style="dim", justify="left", min_width=25)
+    table.add_column("Details", style="dim", justify="left", max_width=32)
 
     for idx, r in enumerate(records, 1):
         status_style = "bold green" if r["status"] == "Active" or r["status"] == "Active Session" else \
                        "bold red" if "Deactivated" in r["status"] or "Expired" in r["status"] else "yellow"
 
+        c_display = f"{r['country_name']} ({r['country_code'].upper()})" if r["country_code"] != "unknown" else "Unknown"
         row = [
             str(idx),
-            r["file_name"][:28] + ("..." if len(r["file_name"]) > 28 else ""),
-            r["username"][:18],
-            f"{r['country_name']} ({r['country_code'].upper()})",
+            r["file_name"][:25] + ("..." if len(r["file_name"]) > 25 else ""),
+            r["username"][:17],
+            c_display,
             r["idc"],
             f"[{status_style}]{r['status']}[/{status_style}]",
         ]
@@ -333,7 +345,7 @@ def display_results_table(records: List[Dict[str, Any]], deep: bool = False):
                 str(r["following"] if r["following"] is not None else "-"),
                 str(r["videos"] if r["videos"] is not None else "-"),
             ])
-        row.append(r["detail"][:38])
+        row.append(r["detail"][:32])
         table.add_row(*row)
 
     console.print(table)
@@ -456,31 +468,18 @@ def main():
         rec = scan_cookie_metadata(f)
         records.append(rec)
 
-    # Optional Deep Audit with Playwright
+    # Optional Deep Audit with Playwright (Thread-isolated instances)
     if args.deep:
         console.print(f"\n[*] Starting Deep Live Audit with [bold green]{args.concurrency}[/bold green] browser worker(s)...")
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--mute-audio", "--no-sandbox"]
-            )
-            clean_ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{browser.version} Safari/537.36"
-            context = browser.new_context(
-                viewport={"width": 1440, "height": 900},
-                user_agent=clean_ua
-            )
-
-            with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-                futures = {executor.submit(audit_account_live, r, context): r for r in records}
-                done_count = 0
-                for fut in as_completed(futures):
-                    done_count += 1
-                    r = futures[fut]
-                    pct = int(done_count / len(records) * 100)
-                    if done_count % 5 == 0 or done_count == len(records):
-                        console.print(f"  [dim]Audited {done_count}/{len(records)} accounts ({pct}% complete)...[/dim]")
-            browser.close()
+        with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+            futures = {executor.submit(audit_account_live, r): r for r in records}
+            done_count = 0
+            for fut in as_completed(futures):
+                done_count += 1
+                fut.result()
+                pct = int(done_count / len(records) * 100)
+                if done_count % 5 == 0 or done_count == len(records):
+                    console.print(f"  [dim]Audited {done_count}/{len(records)} accounts ({pct}% complete)...[/dim]")
 
     display_results_table(records, deep=args.deep)
     display_summary_breakdown(records)

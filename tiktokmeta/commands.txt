@@ -2,6 +2,15 @@
 TIKTOK META - COOKIE ANALYZER & ACCOUNT AUDITOR COMMANDS
 ================================================================================
 
+python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok"
+python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3
+python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --sort
+python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --export my_accounts_report 
+python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3 --sort --export full_audit_report
+
+
+
+
 Description:
   Scans all TikTok .txt or .json cookie files, extracts geographic registration 
   data (store-country-code), target datacenter IDC (tt-target-idc), user ID (uid_tt), 
@@ -59,3 +68,4 @@ python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --export my_accoun
 5. ALL OPTIONS COMBINED (Full Audit + Country Sorting + Custom Export)
 --------------------------------------------------------------------------------
 python tiktokmeta.py -c "C:\Users\Hydra\Desktop\Alive\Tiktok" --deep -w 3 --sort --export full_audit_report
+
