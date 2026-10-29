@@ -321,9 +321,11 @@ class TikTokFollowBot:
             browser: Browser = p.chromium.launch(**launch_kwargs)
             log_info(f"Native Chromium {browser.version}; native UA/client hints; anti-detection flags active.")
 
+            clean_ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{browser.version} Safari/537.36"
             context_kwargs = {
                 "viewport": {"width": 1440, "height": 900},
                 "ignore_https_errors": True,
+                "user_agent": clean_ua,
             }
 
             context: BrowserContext = browser.new_context(**context_kwargs)
